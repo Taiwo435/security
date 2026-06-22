@@ -21,7 +21,9 @@ import org.opensearch.security.auditlog.AuditLog;
 import org.opensearch.security.auditlog.AuditLog.Origin;
 import org.opensearch.security.auditlog.impl.AuditCategory;
 import org.opensearch.security.auditlog.impl.AuditMessage;
+import org.opensearch.security.support.ConfigConstants;
 import org.opensearch.tasks.Task;
+import org.opensearch.threadpool.ThreadPool;
 
 /**
  * A lightweight action filter that logs audit events without performing
@@ -35,10 +37,12 @@ public class AuditActionFilter implements ActionFilter {
 
     private final AuditLog auditLog;
     private final ClusterService clusterService;
+    private final ThreadPool threadPool;
 
-    public AuditActionFilter(AuditLog auditLog, ClusterService clusterService) {
+    public AuditActionFilter(AuditLog auditLog, ClusterService clusterService, ThreadPool threadPool) {
         this.auditLog = auditLog;
         this.clusterService = clusterService;
+        this.threadPool = threadPool;
     }
 
     @Override
@@ -58,8 +62,11 @@ public class AuditActionFilter implements ActionFilter {
         // Build the audit event with fields available in non-FGAC modes
         AuditMessage msg = new AuditMessage(AuditCategory.REQUEST_AUDIT, clusterService, Origin.REST, Origin.TRANSPORT);
 
-        // Source IP — from the request directly 
+        // Source IP — from the request directly, or from ThreadContext (set by REST wrapper)
         TransportAddress remoteAddress = request.remoteAddress();
+        if (remoteAddress == null) {
+            remoteAddress = threadPool.getThreadContext().getTransient(ConfigConstants.OPENDISTRO_SECURITY_REMOTE_ADDRESS);
+        }
         msg.addRemoteAddress(remoteAddress);
 
         // Action name — the transport action string (e.g., "indices:data/write/index")

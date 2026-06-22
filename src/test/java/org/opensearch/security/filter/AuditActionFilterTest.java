@@ -22,6 +22,7 @@ import org.opensearch.action.support.ActionRequestMetadata;
 import org.opensearch.cluster.ClusterName;
 import org.opensearch.cluster.node.DiscoveryNode;
 import org.opensearch.cluster.service.ClusterService;
+import org.opensearch.common.util.concurrent.ThreadContext;
 import org.opensearch.core.action.ActionListener;
 import org.opensearch.core.action.ActionResponse;
 import org.opensearch.core.common.transport.TransportAddress;
@@ -29,6 +30,7 @@ import org.opensearch.security.auditlog.AuditLog;
 import org.opensearch.security.auditlog.impl.AuditCategory;
 import org.opensearch.security.auditlog.impl.AuditMessage;
 import org.opensearch.tasks.Task;
+import org.opensearch.threadpool.ThreadPool;
 
 import org.mockito.ArgumentCaptor;
 
@@ -44,12 +46,15 @@ public class AuditActionFilterTest {
 
     private AuditLog auditLog;
     private ClusterService clusterService;
+    private ThreadPool threadPool;
     private AuditActionFilter filter;
 
     @Before
     public void setUp() {
         auditLog = mock(AuditLog.class);
         clusterService = mock(ClusterService.class);
+        threadPool = mock(ThreadPool.class);
+        when(threadPool.getThreadContext()).thenReturn(new ThreadContext(org.opensearch.common.settings.Settings.EMPTY));
 
         DiscoveryNode node = mock(DiscoveryNode.class);
         when(node.getHostAddress()).thenReturn("127.0.0.1");
@@ -59,7 +64,7 @@ public class AuditActionFilterTest {
         when(clusterService.localNode()).thenReturn(node);
         when(clusterService.getClusterName()).thenReturn(new ClusterName("test-cluster"));
 
-        filter = new AuditActionFilter(auditLog, clusterService);
+        filter = new AuditActionFilter(auditLog, clusterService, threadPool);
     }
 
     @SuppressWarnings("unchecked")

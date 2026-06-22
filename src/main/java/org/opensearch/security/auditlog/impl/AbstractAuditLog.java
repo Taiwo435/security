@@ -339,7 +339,10 @@ public abstract class AbstractAuditLog implements AuditLog {
 
     @Override
     public void logRequestAudit(AuditMessage msg) {
-        save(msg);  // sends to AuditMessageRouter → configured sinks (async)
+        if (auditConfigFilter != null && auditConfigFilter.getDisabledTransportCategories().contains(msg.getCategory())) {
+            return;
+        }
+        save(msg);
     }
 
     // Routes settings change audit to the appropriate handler

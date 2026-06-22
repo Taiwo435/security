@@ -27,6 +27,7 @@
 package org.opensearch.security;
 
 import java.io.IOException;
+import java.net.InetSocketAddress;
 import java.net.URL;
 import java.nio.file.Files;
 import java.nio.file.LinkOption;
@@ -98,6 +99,7 @@ import org.opensearch.core.common.io.stream.NamedWriteableRegistry;
 import org.opensearch.core.index.Index;
 import org.opensearch.core.indices.breaker.CircuitBreakerService;
 import org.opensearch.core.rest.RestStatus;
+import org.opensearch.core.common.transport.TransportAddress;
 import org.opensearch.core.transport.TransportResponse;
 import org.opensearch.core.xcontent.NamedXContentRegistry;
 import org.opensearch.env.Environment;
@@ -125,9 +127,11 @@ import org.opensearch.plugins.SecureHttpTransportSettingsProvider;
 import org.opensearch.plugins.SecureSettingsFactory;
 import org.opensearch.plugins.SecureTransportSettingsProvider;
 import org.opensearch.repositories.RepositoriesService;
+import org.opensearch.rest.RestChannel;
 import org.opensearch.rest.RestController;
 import org.opensearch.rest.RestHandler;
 import org.opensearch.rest.RestHeaderDefinition;
+import org.opensearch.rest.RestRequest;
 import org.opensearch.script.ScriptService;
 import org.opensearch.search.internal.InternalScrollSearchRequest;
 import org.opensearch.search.internal.ReaderContext;
@@ -248,6 +252,7 @@ import org.opensearch.transport.TransportRequestOptions;
 import org.opensearch.transport.TransportResponseHandler;
 import org.opensearch.transport.TransportService;
 import org.opensearch.transport.client.Client;
+import org.opensearch.transport.client.node.NodeClient;
 import org.opensearch.transport.netty4.ssl.SecureNetty4Transport;
 import org.opensearch.watcher.ResourceWatcherService;
 
@@ -813,7 +818,25 @@ public final class OpenSearchSecurityPlugin extends OpenSearchSecuritySSLPlugin
     public UnaryOperator<RestHandler> getRestHandlerWrapper(final ThreadContext threadContext, Set<RestHeaderDefinition> headersToCopy) {
 
         if (client || disabled || SSLConfig.isSslOnlyMode()) {
-            return (rh) -> rh;
+            return (rh) -> new RestHandler() {
+                @Override
+                public void handleRequest(RestRequest request, RestChannel channel, NodeClient client) throws Exception {
+                    // Store remote address in ThreadContext so AuditActionFilter can read it
+                    InetSocketAddress remoteAddress = request.getHttpChannel().getRemoteAddress();
+                    if (remoteAddress != null) {
+                        threadContext.putTransient(
+                            ConfigConstants.OPENDISTRO_SECURITY_REMOTE_ADDRESS,
+                            new TransportAddress(remoteAddress)
+                        );
+                    }
+                    rh.handleRequest(request, channel, client);
+                }
+
+                @Override
+                public boolean allowSystemIndexAccessByDefault() {
+                    return rh.allowSystemIndexAccessByDefault();
+                }
+            };
         }
 
         return (rh) -> securityRestHandler.wrap(rh, adminDns, headersToCopy);
@@ -1004,7 +1027,7 @@ public final class OpenSearchSecurityPlugin extends OpenSearchSecuritySSLPlugin
         
         // !(auditLog instanceof NullAuditLog) prevents registering AuditActionFilter when there's no real sink to send events to. No point intercepting every request just to discard the message.
         } else if (!client && auditLog != null && !(auditLog instanceof NullAuditLog)) {  
-            filters.add(new AuditActionFilter(auditLog, cs));
+            filters.add(new AuditActionFilter(auditLog, cs, threadPool));
         }
         return filters;
     }
@@ -1241,6 +1264,9 @@ public final class OpenSearchSecurityPlugin extends OpenSearchSecuritySSLPlugin
         final List<Object> components = new ArrayList<Object>();
 
         if (client || disabled) {
+            if (disabled) {
+                initStandaloneAuditIfEnabled(localClient, threadPool, clusterService, environment);
+            }
             return components;
         }
 
@@ -1707,14 +1733,6 @@ public final class OpenSearchSecurityPlugin extends OpenSearchSecuritySSLPlugin
                 Property.NodeScope
             )
         ); // not filtered here
-        settings.add(
-            Setting.listSetting(
-                ConfigConstants.SECURITY_AUDIT_CONFIG_DISABLED_CATEGORIES,
-                Collections.emptyList(),
-                Function.identity(),
-                Property.NodeScope
-            )
-        );
         final List<String> ignoredUsers = new ArrayList<String>(2);
         ignoredUsers.add("kibanaserver");
         settings.add(
