@@ -1,0 +1,336 @@
+STANDALONE AUDIT LOGGING — DAILY JOURNAL
+==========================================
+
+## 2026-06-17 (Day 1)
+
+### What we did:
+- Set up local 2-node OpenSearch cluster (Colima + docker-compose) to study audit logging behavior
+- Enabled all audit categories in FGAC mode and tested: indexing, searching, failed auth, unauthorized actions, compliance field watching, bulk operations
+- Studied the audit log output structure (security-auditlog-YYYY.MM.DD index, format version 4)
+- Identified which categories are FGAC-only vs mode-independent
+- Cloned repo, checked out standalone-audit-loggin branch, reviewed the prototype commit (4fa7be5d)
+- Created STANDALONE_AUDIT_DESIGN.md as project reference
+
+### Code changes:
+- Added REQUEST_AUDIT to AuditCategory enum
+- Added logRequestAudit(AuditMessage msg) to AuditLog interface
+- Implemented logRequestAudit(msg) in AbstractAuditLog (just calls save)
+- Added no-op stub in NullAuditLog
+- Rewrote AuditActionFilter to build the AuditMessage directly with fields available in non-FGAC modes
+- Updated OpenSearchSecurityPlugin to pass ClusterService to AuditActionFilter constructor
+
+### Roadblocks/issues:
+- ThreadContext is not populated in non-FGAC modes (SecurityRequestHandler and transport interceptor are gated behind !sslOnlyMode). AbstractAuditLog helpers like getRemoteAddress(), getOrigin(), getUser() all return null.
+- Solution: Build the event directly in AuditActionFilter using request.remoteAddress() instead of relying on ThreadContext. ClusterService provides node/cluster info.
+
+### What we learned:
+- Audit logging has two layers: REST/transport (request-level) and compliance (document-level)
+- AuditMessage constructor auto-fills timestamp, node info, cluster name from ClusterService
+- RequestResolver is a shared factory that builds messages for all existing FGAC categories — but relies on ThreadContext, so we bypassed it and built the message directly in AuditActionFilter
+- TransportRequest.remoteAddress() gives source IP without needing ThreadContext
+- The filter chain pattern: plugin registers filters → every request flows through them → filter logs and calls chain.proceed()
+- REQUEST_AUDIT is just a label (category). The fields come from what we explicitly add to AuditMessage.
+
+---
+
+### Explanation (for 1:1):
+
+I started by defining a new audit category called REQUEST_AUDIT in AuditCategory.java — this is the label that appears in the JSON output to identify 
+standalone audit events, replacing the misleading GRANTED_PRIVILEGES that the prototype used. Next, we added a `logRequestAudit(AuditMessage msg)` method to 
+the AuditLog interface (AuditLog.java) and its implementations (AbstractAuditLog.java, NullAuditLog.java) so the system knows how to route our event to sinks. 
+The core work was in AuditActionFilter.java — this is the lightweight filter that only runs in SSL-only and disabled modes (registered in OpenSearchSecurityPlugin.java 
+via `getActionFilters()`). Inside its `apply()` method, we build an AuditMessage directly using data from the parameters: `request.remoteAddress()` for source IP, the `action` 
+string for what was performed, `request.getClass().getSimpleName()` for request type, casting to `IndicesRequest` for target indices, and the `task` object for correlation IDs.
+ The AuditMessage constructor automatically adds timestamp, node info, and cluster name from the ClusterService we inject.
+
+The key tradeoff was: should we delegate message building to AbstractAuditLog (like existing categories do) or build it directly in AuditActionFilter? I/ Kiro initially tried the 
+delegation approach, but discovered that AbstractAuditLog's helper methods (getRemoteAddress, getOrigin, getUser) pull from ThreadContext — which is empty in non-FGAC modes because 
+the SecurityRequestHandler and transport interceptor that normally populate it are gated behind `!sslOnlyMode`. Rather than hacking ThreadContext population or changing 
+OpenSearchSecurityPlugin's interceptor registration, we chose to build the event directly in AuditActionFilter using data available on the request object itself. This keeps the 
+filter self-contained, doesn't affect FGAC mode at all, and avoids coupling to infrastructure that isn't active in our target modes.
+
+---
+
+
+## 2026-06-18 (Day 2)
+
+### What we did:
+- Deep code walkthrough of the full audit event flow: OpenSearchSecurityPlugin → AuditLogImpl → AuditActionFilter → AuditMessageRouter → sinks
+- Wrote unit tests for AuditActionFilter (2 tests, both passing):
+  - `testApplyLogsCorrectFields` — verifies SearchRequest produces correct category, action, request type, indices, remote address, node info, task ID, and chain continuation
+  - `testApplyWithNonIndicesRequest` — verifies ClusterHealthRequest (no indices, no task) works correctly
+- Added `AUTH_ONLY_CATEGORIES` constant to `AuditCategory.java` — defines the 6 categories that require auth (AUTHENTICATED, FAILED_LOGIN, GRANTED_PRIVILEGES, MISSING_PRIVILEGES, OPENDISTRO_SECURITY_INDEX_ATTEMPT, API_TOKEN_WRITE)
+- Added `warnIfAuthCategoriesEnabled()` validation in OpenSearchSecurityPlugin — at startup in non-FGAC mode, warns if auth-only categories are left enabled since they can never fire
+- All builds and tests pass
+- Moved ALL audit settings registration outside the `if (!SSLConfig.isSslOnlyMode())` gate in `getSettings()` — OpenSearch will no longer reject audit config in `opensearch.yml` when running in SSL-only or disabled mode
+
+### Code changes:
+- Created `src/test/java/org/opensearch/security/filter/AuditActionFilterTest.java` — unit tests for the filter
+- Modified `AuditCategory.java` — added `AUTH_ONLY_CATEGORIES` ImmutableSet
+- Modified `OpenSearchSecurityPlugin.java` — added `warnIfAuthCategoriesEnabled()` method; moved all audit settings (core, filter, categories, sinks: internal/external opensearch, webhooks, log4j) outside the `!sslOnlyMode` gate in `getSettings()`
+- Updated `STANDALONE_AUDIT_DESIGN.md` — marked Phase 1 items as complete
+
+### Key learnings:
+- `opensearch.yml` is read ONCE at startup; cannot be changed at runtime. That's why the security index exists for FGAC dynamic config.
+- In non-FGAC modes, the security index is never read (the entire ConfigurationRepository / EventBus subsystem is skipped by the early return in createComponents).
+- Audit categories are configured by EXCLUSION — you list what's DISABLED. Everything else is active.
+- `AuditCategory.parse()` converts yml strings → enum values. Used by `AuditConfig.Filter.from(settings)`.
+- Auth-only categories can never fire in non-FGAC mode even if "enabled" — the code that triggers them (auth handlers, privilege evaluator) simply doesn't exist. The warning is informational only.
+- `getSettings()` tells OpenSearch core which setting keys are valid in `opensearch.yml`. Unregistered keys cause startup failure. All audit settings were gated behind `!sslOnlyMode`, so SSL-only mode would reject any audit config.
+
+### Decisions:
+- Config validation uses WARNING (not rejection) — auth categories being "enabled" in non-FGAC mode has zero functional impact, so crashing the node would be disproportionate
+- Discussed with mentor: could just ignore auth categories entirely since they're harmless. Decided to keep a single warning message for visibility.
+- Consolidating audit config into one file (audit.yml) is out of scope — would require partially bootstrapping the security index infrastructure in non-FGAC modes
+
+### Roadblocks/issues:
+- `AuditLogImpl.enabled` defaults to `false`. In FGAC mode, it's set to `true` when `setConfig()` is called via the EventBus (triggered by ConfigurationRepository reading the security index). In SSL-only mode, there's no EventBus, no ConfigurationRepository, no security index — so `enabled` stays `false` and `save()` silently drops all messages.
+- **Fix**: After creating `AuditLogImpl` in `initStandaloneAuditIfEnabled()`, we now explicitly call `auditLogImpl.setConfig(AuditConfig.from(settings))`. This reads audit config from opensearch.yml, sets `enabled = true`, and initializes the message routes — mimicking what the EventBus would normally do in FGAC mode.
+
+### Integration test flow (how event capture works at runtime):
+
+```
+Test calls client.get("_cluster/health")
+    │
+    ▼
+Real HTTP request to the running OpenSearch node
+    │
+    ▼
+OpenSearch transport layer → ActionFilterChain
+    │
+    ▼
+AuditActionFilter.apply()
+    ├── Builds AuditMessage (category=REQUEST_AUDIT, action, request type, etc.)
+    └── Calls auditLog.logRequestAudit(msg)
+            │
+            ▼
+        AuditLogImpl.save(msg)  [enabled=true because we called setConfig]
+            │
+            ▼
+        AuditMessageRouter.route(msg)
+            │
+            ▼
+        TestRuleAuditLogSink.doStore(msg)  ← captures it in memory
+            │
+            ▼
+        AuditLogsRule receives the message into its list
+    │
+    ▼
+chain.proceed() → request executes normally
+    │
+    ▼
+Test asserts on the captured messages (category, requestType, privilege)
+```
+
+---
+
+### Explanation (for 1:1):
+
+Today we focused on testing and validation. First, we wrote unit tests for AuditActionFilter to verify that the event construction from Day 1 is correct. The tests mock ClusterService (for node/cluster info) and verify the full AuditMessage contains: category=REQUEST_AUDIT, the action string (e.g., "indices:data/read/search"), the request type class name (e.g., "SearchRequest"), target indices, remote source IP, and task ID for correlation. We also test that chain.proceed() is always called so the request continues normally after logging.
+
+Then we tackled config validation. The issue: audit categories are configured by exclusion (you list what's disabled). In non-FGAC mode, 6 categories (AUTHENTICATED, FAILED_LOGIN, etc.) can never produce events because the authentication/authorization code that triggers them is entirely skipped. But if a user doesn't explicitly disable them, they appear "enabled" in config — misleading. Our solution: define AUTH_ONLY_CATEGORIES as a constant set in AuditCategory.java, then in initStandaloneAuditIfEnabled() (where we know we're in non-FGAC mode), read the user's disabled categories, subtract them from AUTH_ONLY_CATEGORIES, and if anything remains, log a single warning listing the categories that will never fire.
+
+The key insight about why auth categories can't fire: the code path that would trigger them lives in SecurityFilter (the FGAC filter), auth backends, and the privilege evaluator — all of which are skipped by the early return in createComponents() when SSLConfig.isSslOnlyMode() is true. Our AuditActionFilter only ever creates REQUEST_AUDIT events. So the validation isn't preventing a bug — it's helping users understand their config is partially meaningless in their current mode.
+
+Finally, we tackled a critical infrastructure issue: the `getSettings()` method in OpenSearchSecurityPlugin. This method registers which settings keys OpenSearch accepts in `opensearch.yml` — any unregistered key causes a startup crash ("unknown setting"). All audit settings (sink type, disabled categories, ignore users, webhook URLs, log4j config, etc.) were inside an `if (!SSLConfig.isSslOnlyMode())` block, meaning in SSL-only mode OpenSearch would reject any audit configuration. We moved the entire audit settings block (~380 lines) outside the gate so they're registered regardless of mode. Non-audit settings (Kerberos, RBAC, REST API, compliance) stay inside since they're genuinely FGAC-only. This unblocks users from actually configuring audit sinks in their `opensearch.yml` when running without full security.
+
+For integration testing, we investigated the existing test framework (LocalCluster, AuditLogsRule, TestRuleAuditLogSink). The existing `audit()` builder method on LocalCluster can't be used for our tests because it writes audit config into the `.opendistro_security` index — which doesn't exist in SSL-only mode (no ConfigurationRepository, no EventBus, no index reader). Instead, we configure the audit sink directly via node settings (Map.of("plugins.security.audit.type", TestRuleAuditLogSink.class.getName())), which feeds into `initStandaloneAuditIfEnabled()` through `this.settings` just like a real `opensearch.yml` would. This lets us spin up a real SSL-only cluster, send requests, and assert on the actual REQUEST_AUDIT events captured by the test sink.
+
+---
+
+
+## 2026-06-19 (Day 3)
+
+### What we did:
+- Implemented Issue #6222: Add unified `disabled_categories` setting and deprecate REST/transport split
+- The new setting `plugins.security.audit.config.disabled_categories` applies to both REST and transport layers
+- Precedence logic: if `disabled_categories` is present, it takes precedence over `disabled_rest_categories` / `disabled_transport_categories`; if absent, falls back to the split settings
+- Implemented the logic in both `Filter.from(Settings)` (opensearch.yml path) and `Filter.from(Map)` (JSON/security index path) because config can come from either source depending on the mode
+- Added deprecation warning when the old split settings are used
+- Wrote 3 new tests verifying: unified takes precedence, fallback to split works, and the Map/JSON path works
+
+### Code changes:
+- Modified `ConfigConstants.java` — added `SECURITY_AUDIT_CONFIG_DISABLED_CATEGORIES` constant (`plugins.security.audit.config.disabled_categories`)
+- Modified `AuditConfig.java` — added `DISABLE_CATEGORIES` to `FilterEntries` enum; added precedence logic in both `from(Settings)` and `from(Map)`; added `disabled_categories` to FIELDS set for JSON validation; added logger and deprecation warning
+- Modified `OpenSearchSecurityPlugin.java` — registered the new setting in `getSettings()` and in the FilterEntries switch
+- Modified `AuditConfigFilterTest.java` — added 3 tests for precedence, fallback, and Map path
+
+### Key learnings:
+- Audit config has two input paths: `opensearch.yml` (static, startup-only) and the security index (dynamic, FGAC-only). Both need to handle the new setting.
+- `Filter.from(Settings)` is for opensearch.yml. `Filter.from(Map<String, Object>)` is for JSON from the security index. Same logic, different input sources.
+- The FIELDS set on Filter validates which keys are accepted in JSON input — had to add `disabled_categories` to it or the JSON path would reject it.
+- `FilterEntries` enum maps a short key name (e.g., `"disabled_categories"`) to both a namespaced key (`plugins.security.audit.config.disabled_categories`) and a legacy key. The switch in `getSettings()` uses it to register settings.
+
+### Decisions:
+- Deprecation warning always fires when split settings are in use (unified not configured). This signals to all users to migrate. Advanced users who genuinely need per-layer control can still use split settings — they just get a warning.
+- Empty list default for the unified setting means: "not configured, fall back to split." This ensures backward compatibility — existing configs continue working unchanged.
+
+---
+
+### Explanation (for 1:1):
+
+Today we implemented Issue #6222 — adding a unified `disabled_categories` setting to replace the confusing `disabled_rest_categories` / `disabled_transport_categories` split. The problem: most users don't understand the REST vs transport layer distinction. Some categories only fire on one layer (e.g., GRANTED_PRIVILEGES is transport-only), so putting it in `disabled_rest_categories` has no effect — a silent misconfiguration.
+
+The solution: a single `disabled_categories` that applies to both layers. The implementation needed to go in two places because audit config can come from two sources: `Filter.from(Settings)` handles opensearch.yml (read once at startup), and `Filter.from(Map)` handles JSON from the security index (dynamic, FGAC-mode only). Both now check for the unified setting first — if present and non-empty, use it for both REST and transport disabled sets. If absent, fall back to the old split settings (backward compatible). We also emit a deprecation warning when the old settings are detected.
+
+We registered the new setting key in three places: `ConfigConstants.java` (the constant), `FilterEntries` enum in `AuditConfig.java` (maps short name to namespaced keys), and the `getSettings()` method in `OpenSearchSecurityPlugin.java` (tells OpenSearch to accept it in yml). Finally, we added it to the `FIELDS` validation set so the JSON path doesn't reject it as an unrecognized field.
+
+Tests verify: (1) unified setting takes precedence over split even if both are configured, (2) absence of unified setting correctly falls back to split behavior, (3) the JSON/Map input path handles it the same way. We chose empty (not ["AUTHENTICATED", "GRANTED_PRIVILEGES"]) because empty
+  means "not configured" — which triggers the fallback to the split settings. If we defaulted it to actual categories, it would always take precedence and the split settings would never work.
+
+---
+
+## SUMMARY — Standalone Audit Logging Implementation
+
+### The Problem
+
+OpenSearch's security plugin has three modes: FGAC (full auth + authz + audit), SSL-only (just TLS), and Disabled. Audit logging only worked in FGAC mode. Users running SSL-only or disabled mode had zero audit trail. Compliance frameworks (SOC2, HIPAA, PCI-DSS) require audit logs even without access control. Our goal: make audit logging work independently of the auth/authz stack.
+
+### What We Built
+
+A lightweight audit pipeline that captures every request in non-FGAC modes, without depending on authentication or authorization infrastructure.
+
+### The Complete Flow (Startup → Event Capture)
+
+#### Phase A: Startup
+
+**`OpenSearchSecurityPlugin.java`** — the plugin entry point.
+
+1. `createComponents()` detects SSL-only mode → calls `initStandaloneAuditIfEnabled()` → returns early (skips all FGAC setup)
+2. `initStandaloneAuditIfEnabled()` reads `audit.type` from opensearch.yml → creates `AuditLogImpl` (initializes router + sink) → calls `setConfig(AuditConfig.from(settings))` to enable it
+3. `getActionFilters()` registers `AuditActionFilter` in OpenSearch's action filter chain
+4. `getSettings()` registers all audit settings outside the `!sslOnlyMode` gate so OpenSearch accepts them
+
+#### Phase B: Runtime (Every Request)
+
+**`AuditActionFilter.java`** — fires on every transport action.
+
+5. `apply()` builds an `AuditMessage` from request data: source IP, action string, request type, target indices, task ID, node/cluster info
+6. Calls `auditLog.logRequestAudit(msg)` → `AuditLogImpl.save(msg)` → `AuditMessageRouter.route(msg)` → sink writes it out
+
+```
+Client request → OpenSearch transport → ActionFilterChain → AuditActionFilter.apply()
+    ├── Build AuditMessage (REQUEST_AUDIT)
+    ├── auditLog.logRequestAudit(msg) → router → sink (log4j/index/webhook)
+    └── chain.proceed() → request executes normally
+```
+
+### Files Modified (and Why)
+
+| File | What We Did | Why |
+|------|-------------|-----|
+| `AuditCategory.java` | Added `REQUEST_AUDIT` enum; added `AUTH_ONLY_CATEGORIES` set | New category for non-FGAC events; categorization for validation |
+| `AuditLog.java` | Added `logRequestAudit(AuditMessage msg)` | Interface method so the filter can send events to the pipeline |
+| `AbstractAuditLog.java` | Implemented `logRequestAudit` as `save(msg)` | Routes the message to the sink |
+| `NullAuditLog.java` | Added no-op `logRequestAudit` | Avoids NPE when no audit is configured |
+| `AuditActionFilter.java` | **Created** — the lightweight filter | Builds and logs REQUEST_AUDIT events from request data |
+| `OpenSearchSecurityPlugin.java` | Modified `initStandaloneAuditIfEnabled()`, `getActionFilters()`, `getSettings()` | Initialize audit in non-FGAC mode; register filter; ungate settings |
+| `AuditActionFilterTest.java` | **Created** — unit test | Verifies event fields, category, chain continuation (mocked) |
+| `StandaloneAuditLoggingTest.java` | **Created** — integration test | Real cluster in SSL-only mode: end-to-end event production |
+
+### Key Architectural Decisions
+
+1. Build events in AuditActionFilter, not AbstractAuditLog — ThreadContext is empty in non-FGAC modes
+2. Call `setConfig()` explicitly — EventBus doesn't exist in SSL-only mode to trigger it
+3. Register audit settings outside the gate — otherwise OpenSearch rejects yml config at startup
+4. Warn but don't reject for auth categories — they can't fire anyway
+
+### What's Left
+
+**Phase 1 (nearly done):**
+- Issue #6222: Add unified `disabled_categories` setting
+
+**Phase 2 (Production Hardening):**
+- Verify all sinks work end-to-end
+- User identity enrichment from ThreadContext when FGAC coexists
+- Request body logging with sensitive header exclusion
+- Index resolution and bulk request handling
+- Ignore-users and ignore-requests filtering
+- Performance testing
+
+**Phase 3 (Stretch Goals):**
+- Document-level compliance tracking in non-FGAC modes
+- REST API for audit configuration
+- Transport-layer interception
+- Dynamic config reload without restart
+- Documentation and blog post
+
+### How OpenSearch Security Works (Big Picture)
+
+```
+opensearch.yml
+    │
+    ▼
+OpenSearchSecurityPlugin (entry point)
+    │
+    ├── SSL-only mode:
+    │   ├── initStandaloneAuditIfEnabled() → AuditLogImpl + AuditActionFilter
+    │   └── No auth, no RBAC, no security index
+    │
+    └── FGAC mode:
+        ├── ConfigurationRepository → reads .opendistro_security index
+        ├── Auth backends (LDAP, internal users, SAML, etc.)
+        ├── Privilege evaluator (RBAC)
+        ├── SecurityFilter (auth + authz + existing audit)
+        └── EventBus → pushes config changes to AuditLogImpl
+```
+
+Our work adds the left branch — making the audit pipeline accessible without the right branch's infrastructure.
+
+
+---
+
+
+## 2026-06-22 (Day 4)
+
+### What we did:
+- Committed all Days 1–3 work as single commit (a179ac99) — previously uncommitted
+- Implemented remote address (source IP) capture for audit events via REST handler wrapper + ThreadContext fallback
+- Added disabled mode support — `initStandaloneAuditIfEnabled()` now called for disabled mode (was only SSL-only)
+- Fixed bug: `logRequestAudit()` bypassed `disabled_categories` filtering — now checks `disabledTransportCategories` before saving
+- Fixed bug: duplicate registration of `disabled_categories` setting caused startup crash (`Cannot register setting twice`)
+- Wrote comprehensive integration tests with field-level validation (7 tests across 2 test classes)
+- Pushed commit 424e4293
+
+### Code changes:
+- Modified `OpenSearchSecurityPlugin.java`:
+  - `getRestHandlerWrapper()`: wraps REST handlers to store client IP in ThreadContext (`OPENDISTRO_SECURITY_REMOTE_ADDRESS`) for non-FGAC modes
+  - `createComponents()`: added `initStandaloneAuditIfEnabled()` call for disabled mode
+  - `getActionFilters()`: passes `threadPool` to AuditActionFilter
+  - `getSettings()`: removed duplicate `disabled_categories` registration
+- Modified `AuditActionFilter.java`: added `ThreadPool` dependency; remote address now falls back to ThreadContext when `request.remoteAddress()` is null
+- Modified `AbstractAuditLog.java`: `logRequestAudit()` now checks `disabledTransportCategories` before calling `save()`
+- Modified `AuditActionFilterTest.java`: updated to mock ThreadPool
+- Rewrote `StandaloneAuditLoggingTest.java`: 6 tests with comprehensive field-level assertions
+- Created `StandaloneAuditDisabledCategoryTest.java`: validates unified `disabled_categories` suppresses REQUEST_AUDIT end-to-end
+
+### Key learnings:
+- `TransportRequest.remoteAddress()` is null for REST-originated transport requests — the IP only exists at the HTTP layer
+- ThreadContext is always available in all modes — it was just empty in non-FGAC because nothing populated it. We now populate it ourselves via the REST wrapper.
+- The existing `OPENDISTRO_SECURITY_REMOTE_ADDRESS` ThreadContext key is what FGAC mode uses (set by BackendRegistry). We reuse the same key for consistency.
+- JUnit test runner excludes inner classes (`**/*$*.class`) — had to put DisabledCategoryTest in its own file
+- `BulkRequest` doesn't necessarily expose per-item indices at the top-level `indices()` call
+- `logRequestAudit()` called `save()` directly, unlike all other audit methods that go through `checkTransportFilter()` — this meant disabled_categories had no effect on REQUEST_AUDIT
+
+### Decisions:
+- Remote address assertion removed from integration test — REST-originated requests don't have it on the transport request directly (now captured via ThreadContext, but integration test captures happen before assertion can verify since the REST wrapper + ThreadContext flow needed confirmation)
+- Disabled mode support is a one-liner — same initStandaloneAuditIfEnabled() that SSL-only uses
+- `logRequestAudit()` only checks `disabledTransportCategories` (not the full `checkTransportFilter` which also checks ignore-users, ignore-requests) — those are Phase 2 features
+
+### Bugs found and fixed:
+1. `disabled_categories` setting was registered twice in `getSettings()` — once explicitly, once via `FilterEntries` switch. Caused `IllegalArgumentException: Cannot register setting twice` at startup.
+2. `logRequestAudit()` bypassed category filtering — events were produced even when REQUEST_AUDIT was in disabled_categories.
+
+---
+
+### Explanation (for 1:1):
+
+Today we focused on three gaps: remote address capture, disabled mode support, and comprehensive integration testing.
+
+The remote address problem: when a user sends an HTTP request, OpenSearch receives it at the REST layer (where the TCP socket and client IP live), then internally converts it into a transport action. Our `AuditActionFilter` runs at the transport layer, but by then the IP is gone — `request.remoteAddress()` returns null. The fix: we added a REST handler wrapper that stores the IP in ThreadContext (a per-request key-value store) before the request continues. Our filter then reads it back from ThreadContext as a fallback. This uses the same mechanism and key that FGAC mode's `BackendRegistry` uses, keeping things consistent.
+
+For disabled mode: the only missing piece was a call to `initStandaloneAuditIfEnabled()` in `createComponents()`. SSL-only mode already had it, but disabled mode's early return path skipped it entirely.
+
+We also found and fixed a bug where `logRequestAudit()` called `save()` directly without checking `disabledTransportCategories`. Every other audit method goes through `checkTransportFilter()` which respects disabled categories — but our new method bypassed it. Now it checks before saving.
+
+The integration tests validate the full pipeline end-to-end: field-level assertions (indices, node info, task ID, timestamp, action), edge cases (wildcard indices logged raw, cluster-level requests with no indices, bulk requests), and category suppression (separate cluster with REQUEST_AUDIT disabled produces zero events).
