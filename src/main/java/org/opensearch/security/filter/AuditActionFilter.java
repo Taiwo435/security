@@ -22,6 +22,7 @@ import org.opensearch.security.auditlog.AuditLog.Origin;
 import org.opensearch.security.auditlog.impl.AuditCategory;
 import org.opensearch.security.auditlog.impl.AuditMessage;
 import org.opensearch.security.support.ConfigConstants;
+import org.opensearch.security.user.User;
 import org.opensearch.tasks.Task;
 import org.opensearch.threadpool.ThreadPool;
 
@@ -88,8 +89,19 @@ public class AuditActionFilter implements ActionFilter {
             }
         }
 
+        // Client cert identity (CN/SAN) — set by REST wrapper when mTLS is configured
+        String principal = threadPool.getThreadContext().getTransient(ConfigConstants.OPENDISTRO_SECURITY_SSL_PRINCIPAL);
+        if (principal != null) {
+            msg.addEffectiveUser(principal);
+        }
+
+        // Authenticated user identity — set by SecurityFilter when FGAC is active
+        User user = threadPool.getThreadContext().getTransient(ConfigConstants.OPENDISTRO_SECURITY_USER);
+        if (user != null) {
+            msg.addEffectiveUser(user.getName());
+        }
+
         // TODO: request body (Phase 2 — needs configurable sensitive header exclusion)
-        // TODO: user identity from client cert CN/SAN in SSL-only mode
 
         auditLog.logRequestAudit(msg); // routes to configured sink (log4j, index, etc)
         chain.proceed(task, action, request, listener); //  passes the request to the next filter in the chain, or if there are no more filters, executes the actual action (index the doc, run the search, etc.).

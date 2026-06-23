@@ -34,6 +34,12 @@ import java.nio.file.LinkOption;
 import java.nio.file.Path;
 import java.nio.file.attribute.PosixFilePermission;
 import java.security.MessageDigest;
+import java.security.cert.Certificate;
+import java.security.cert.X509Certificate;
+
+import javax.net.ssl.SSLEngine;
+
+import io.netty.handler.ssl.SslHandler;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collection;
@@ -224,6 +230,7 @@ import org.opensearch.security.ssl.OpenSearchSecuritySSLPlugin;
 import org.opensearch.security.ssl.SslExceptionHandler;
 import org.opensearch.security.ssl.http.netty.ValidatingDispatcher;
 import org.opensearch.security.ssl.transport.DefaultPrincipalExtractor;
+import org.opensearch.security.ssl.transport.PrincipalExtractor;
 import org.opensearch.security.ssl.util.SSLConfigConstants;
 import org.opensearch.security.state.SecurityMetadata;
 import org.opensearch.security.support.ConfigConstants;
@@ -829,6 +836,27 @@ public final class OpenSearchSecurityPlugin extends OpenSearchSecuritySSLPlugin
                             new TransportAddress(remoteAddress)
                         );
                     }
+
+                    // Extract client cert principal (CN/SAN) when mTLS is configured
+                    SslHandler sslHandler = request.getHttpChannel().get("ssl_http", SslHandler.class).orElse(null);
+                    if (sslHandler != null) {
+                        SSLEngine engine = sslHandler.engine();
+                        if (engine.getNeedClientAuth() || engine.getWantClientAuth()) {
+                            try {
+                                Certificate[] certs = engine.getSession().getPeerCertificates();
+                                if (certs != null && certs.length > 0 && certs[0] instanceof X509Certificate) {
+                                    String principal = new DefaultPrincipalExtractor()
+                                        .extractPrincipal((X509Certificate) certs[0], PrincipalExtractor.Type.HTTP);
+                                    if (principal != null) {
+                                        threadContext.putTransient(ConfigConstants.OPENDISTRO_SECURITY_SSL_PRINCIPAL, principal);
+                                    }
+                                }
+                            } catch (Exception e) {
+                                // No peer cert available — client didn't present one (wantClientAuth case)
+                            }
+                        }
+                    }
+
                     rh.handleRequest(request, channel, client);
                 }
 

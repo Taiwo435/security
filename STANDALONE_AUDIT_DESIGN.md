@@ -78,7 +78,7 @@ The prototype commit (`4fa7be5d`) proves the concept with ~30 lines of productio
 
 **Identity by mode**:
 - FGAC: username (from ThreadContext, if coexisting)
-- SSL-only: source IP (cert CN/SAN as stretch goal — TBD with Craig)
+- SSL-only: source IP + cert CN/SAN (subject DN from client cert when mTLS configured)
 - Disabled: source IP only
 
 ---
@@ -121,7 +121,8 @@ The prototype commit (`4fa7be5d`) proves the concept with ~30 lines of productio
 
 ### Phase 2 (Weeks 5–8): Production Hardening
 - [ ] Verify all sinks work end-to-end (Log4j, internal index, external ES, webhook, Kafka)
-- [ ] User identity enrichment — read user from ThreadContext when FGAC coexists
+- [x] Client cert identity enrichment — CN/SAN from peer cert when mTLS configured (effective_user field)
+- [x] User identity enrichment — read user from ThreadContext when FGAC coexists
 - [ ] Request body logging with sensitive header exclusion
 - [ ] Index resolution and bulk request handling
 - [ ] Ignore-users and ignore-requests filtering

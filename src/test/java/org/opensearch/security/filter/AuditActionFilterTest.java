@@ -139,4 +139,45 @@ public class AuditActionFilterTest {
 
         verify(chain).proceed(null, "cluster:monitor/health", request, listener);
     }
+
+    @SuppressWarnings("unchecked")
+    @Test
+    public void testApplyIncludesSslPrincipalAsEffectiveUser() throws Exception {
+        // Simulate REST wrapper having stored the SSL principal in ThreadContext
+        threadPool.getThreadContext().putTransient(
+            org.opensearch.security.support.ConfigConstants.OPENDISTRO_SECURITY_SSL_PRINCIPAL,
+            "CN=admin,OU=client,O=org"
+        );
+
+        ClusterHealthRequest request = new ClusterHealthRequest();
+        ActionFilterChain<ClusterHealthRequest, ActionResponse> chain = mock(ActionFilterChain.class);
+        ActionListener<ActionResponse> listener = mock(ActionListener.class);
+
+        filter.apply(null, "cluster:monitor/health", request, ActionRequestMetadata.empty(), listener, chain);
+
+        ArgumentCaptor<AuditMessage> captor = ArgumentCaptor.forClass(AuditMessage.class);
+        verify(auditLog).logRequestAudit(captor.capture());
+
+        AuditMessage msg = captor.getValue();
+        assertThat(msg.getEffectiveUser(), equalTo("CN=admin,OU=client,O=org"));
+
+        verify(chain).proceed(null, "cluster:monitor/health", request, listener);
+    }
+
+    @SuppressWarnings("unchecked")
+    @Test
+    public void testApplyWithoutSslPrincipalHasNoEffectiveUser() throws Exception {
+        // No SSL principal in ThreadContext — effective_user should be absent
+        ClusterHealthRequest request = new ClusterHealthRequest();
+        ActionFilterChain<ClusterHealthRequest, ActionResponse> chain = mock(ActionFilterChain.class);
+        ActionListener<ActionResponse> listener = mock(ActionListener.class);
+
+        filter.apply(null, "cluster:monitor/health", request, ActionRequestMetadata.empty(), listener, chain);
+
+        ArgumentCaptor<AuditMessage> captor = ArgumentCaptor.forClass(AuditMessage.class);
+        verify(auditLog).logRequestAudit(captor.capture());
+
+        AuditMessage msg = captor.getValue();
+        assertThat(msg.getEffectiveUser(), equalTo(null));
+    }
 }

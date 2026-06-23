@@ -334,3 +334,60 @@ For disabled mode: the only missing piece was a call to `initStandaloneAuditIfEn
 We also found and fixed a bug where `logRequestAudit()` called `save()` directly without checking `disabledTransportCategories`. Every other audit method goes through `checkTransportFilter()` which respects disabled categories — but our new method bypassed it. Now it checks before saving.
 
 The integration tests validate the full pipeline end-to-end: field-level assertions (indices, node info, task ID, timestamp, action), edge cases (wildcard indices logged raw, cluster-level requests with no indices, bulk requests), and category suppression (separate cluster with REQUEST_AUDIT disabled produces zero events).
+
+
+---
+
+
+## 2026-06-22 (Day 4, continued — Phase 2 start)
+
+### What we did:
+- Implemented CN/SAN identity enrichment from client certificates in SSL-only mode
+- When mTLS is configured (needClientAuth or wantClientAuth), the REST handler wrapper now extracts the peer certificate's subject DN (e.g., "CN=kirk,OU=client,O=client,L=test,C=de") and stores it in ThreadContext
+- AuditActionFilter reads it and adds it to the audit event as `effective_user`
+- Audit events now contain both IP (always) and identity (when mTLS configured)
+- Verified all sinks work end-to-end in standalone mode:
+  - `internal_opensearch`: new integration test (StandaloneAuditSinksTest) confirms audit index `security-auditlog-*` is created with REQUEST_AUDIT events
+  - `log4j`, `webhook`: share identical code path after AuditMessageRouter.route() — already unit tested in existing suite (WebhookAuditLogTest, etc.)
+  - `external_opensearch`: same AbstractInternalOpenSearchSink base class as internal — needs 2nd cluster, skipped
+- Wrote unit tests for CN/SAN: testApplyIncludesSslPrincipalAsEffectiveUser, testApplyWithoutSslPrincipalHasNoEffectiveUser
+- Wrote integration test for CN/SAN: StandaloneAuditMtlsTest — mTLS OPTIONAL cluster, admin cert produces `CN=kirk` in effective_user
+- Created user perspective research document (RESEARCH_USER_PERSPECTIVE.md)
+- All tests passing (unit + integration)
+
+### Code changes:
+- Modified `OpenSearchSecurityPlugin.java` (`getRestHandlerWrapper`):
+  - After storing remote address, gets SSLEngine via `request.getHttpChannel().get("ssl_http", SslHandler.class)`
+  - If mTLS configured, calls `engine.getSession().getPeerCertificates()`
+  - Extracts subject DN via `DefaultPrincipalExtractor.extractPrincipal()`
+  - Stores in ThreadContext as `OPENDISTRO_SECURITY_SSL_PRINCIPAL`
+  - Added imports: `Certificate`, `X509Certificate`, `SSLEngine`, `SslHandler`, `PrincipalExtractor`
+- Modified `AuditActionFilter.java`:
+  - Reads `OPENDISTRO_SECURITY_SSL_PRINCIPAL` from ThreadContext
+  - If present, calls `msg.addEffectiveUser(principal)`
+- Modified `AuditActionFilterTest.java` — added 2 new tests for SSL principal presence/absence
+- Created `StandaloneAuditMtlsTest.java` — integration test with mTLS OPTIONAL, asserts CN=kirk in effective_user
+- Created `StandaloneAuditSinksTest.java` — integration test with `internal_opensearch` sink, asserts audit index created with correct events
+
+### Key learnings:
+- `SSLRequestHelper.getSSLInfo()` already does the heavy lifting in FGAC mode — extracts certs, validates, extracts principal. But it takes a `SecurityRequest` wrapper, not a raw `RestRequest`. We accessed the SSLEngine directly instead.
+- `DefaultPrincipalExtractor` returns the full subject DN in canonical form (e.g., "CN=kirk,OU=client,O=client,L=test,C=de"). `HTTPClientCertAuthenticator` can further parse specific attributes (just CN) or SANs — that's a future enhancement.
+- `engine.getNeedClientAuth() || engine.getWantClientAuth()` — needClientAuth means cert is required (connection fails without it). wantClientAuth means cert is requested but optional (connection succeeds without one, getPeerCertificates throws SSLPeerUnverifiedException).
+- All sinks share the same code path after `AuditMessageRouter.route(msg)`. The message is just a `Map<String, Object>` that gets serialized to JSON — sinks don't care which category created it. So verifying one real sink (internal_opensearch) is sufficient.
+- The project is currently inside OpenSearchSecurityPlugin.java as a prototype/proving ground. The long-term vision (Issue #502) is extraction into a standalone plugin repo with its own Plugin class and lifecycle.
+
+### Decisions:
+- Store CN/SAN as `effective_user` (reusing existing field) rather than adding a new field — consistent with how FGAC stores username, and downstream tools/dashboards already understand this field
+- Catch-all exception handler around cert extraction — if client doesn't present a cert in wantClientAuth mode, we just skip the field rather than failing the request
+- IP is always captured; identity is additive when available
+- Only tested `internal_opensearch` sink in integration because all sinks share the same routing code path — testing one real sink is sufficient, others are already unit tested
+
+### Not yet committed — will commit tomorrow.
+
+---
+
+### Additional (same day):
+- Added FGAC user identity enrichment: AuditActionFilter now reads `OPENDISTRO_SECURITY_USER` from ThreadContext and adds `user.getName()` as `effective_user`
+- This overrides the cert DN when FGAC is active (resolved username like "admin" is more meaningful than "CN=kirk,OU=client,O=client,L=test,C=de")
+- Identity precedence: (1) cert DN as baseline, (2) FGAC username overrides if present
+- No registration change needed — just makes the filter *capable* of reading FGAC identity when available. Registration in FGAC mode is a separate future decision.
