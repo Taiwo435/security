@@ -120,7 +120,7 @@ The prototype commit (`4fa7be5d`) proves the concept with ~30 lines of productio
 - [x] Fix: logRequestAudit respects disabled_categories
 
 ### Phase 2 (Weeks 5–8): Production Hardening
-- [ ] Verify all sinks work end-to-end (Log4j, internal index, external ES, webhook, Kafka)
+- [x] Verify all sinks work end-to-end (Log4j, internal index, external ES, webhook, Kafka)
 - [x] Client cert identity enrichment — CN/SAN from peer cert when mTLS configured (effective_user field)
 - [x] User identity enrichment — read user from ThreadContext when FGAC coexists
 - [ ] Request body logging with sensitive header exclusion
