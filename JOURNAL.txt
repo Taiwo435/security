@@ -504,3 +504,35 @@ The integration tests validate the full pipeline end-to-end: field-level asserti
 
 **Deprecation warning — CONFIRMED:**
 - `'disabled_rest_categories' and 'disabled_transport_categories' are deprecated. Use 'disabled_categories' instead to apply to both layers.`
+
+---
+
+## 2026-06-25 (Day 7)
+
+### What we did:
+- Research day: FGAC audit logging user experience analysis
+- Spun up FGAC Docker cluster (opensearchproject/opensearch:latest, v3.7.0) with all audit categories enabled
+- Fired 9 test scenarios: successful auth, failed login, unauthorized access, doc write with sensitive fields, compliance read, bulk request, wildcard search, search with body, delete index
+- Switched audit sink from internal_opensearch to log4j for real-time observation via `docker logs`
+- Documented all findings in RESEARCH_USER_PERSPECTIVE.md
+- Added .gitignore entries for docker/certs/ and docker/fgac/ (test infra shouldn't be in repo)
+- Prepared targeted questions for security engineer (managed service perspective)
+
+### Key research findings:
+- One simple GET _cluster/health generates 2+ audit events (AUTHENTICATED at REST + GRANTED_PRIVILEGES at TRANSPORT)
+- No correlation ID linking events from the same user request
+- A _cat/indices call generates 4+ transport events (ClusterState, IndicesStats, GetSettings, ClusterHealth)
+- Bulk with 3 docs → 3 separate COMPLIANCE_DOC_WRITE events (one per doc)
+- COMPLIANCE_DOC_READ logs actual sensitive field VALUES (PII hotspot)
+- INDEX_EVENT fires for flush, create, and delete alike (useless as a signal)
+- A simple _flush → 5 audit events including shard-level cascading
+- Internal system operations log with user=NONE
+- Wildcard resolution works: my-* → shows both original and resolved index name
+
+### What this means for our project:
+- Our single-event-per-request design (AuditActionFilter at transport layer) avoids the fragmentation problem entirely
+- No correlation ID needed because we don't split across layers
+- Unified disabled_categories (our fix) directly addresses the REST/transport split confusion
+- Phase 2 request body logging should consider NOT logging sensitive field values (learned from compliance PII issue)
+
+### No code changes today — research only
