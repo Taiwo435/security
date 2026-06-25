@@ -435,3 +435,72 @@ The integration tests validate the full pipeline end-to-end: field-level asserti
 - `223bb12d` — Phase 2: identity enrichment, remote address, disabled mode, sinks, bug fixes
 - `06f7aa25` — Sink verification tests (internal_opensearch, log4j, webhook)
 - Pending: expanded integration tests (23 tests)
+
+
+---
+
+
+## 2026-06-24 (Day 6)
+
+### What we did:
+- Built plugin ZIP (`opensearch-security-3.8.0.0-SNAPSHOT.zip`) and set up Docker-based visual verification environment
+- Created docker-compose.yml with volume mount: Mac's `docker/plugin/` → container's `/usr/share/opensearch/plugins/opensearch-security`
+- Patched plugin descriptor version (3.8.0 → 3.7.0) to match Docker image since no 3.8 snapshot image exists
+- Generated self-signed TLS certs (root CA + node cert) for SSL-only mode
+- Generated client cert (`CN=taiwo,OU=intern,O=amazon`) for CN/SAN identity testing
+- Started cluster in SSL-only mode with log4j audit sink
+- Sent 15+ real curl requests covering all operations: health, create index, index doc, get, search, update, bulk, mget, wildcard search, non-existent index (404), delete doc, nodes info, aliases, count, delete index
+- Verified ALL requests produce REQUEST_AUDIT events in Docker logs with correct fields (category, privilege, request type, indices, remote address, task ID, node info, timestamps)
+- Confirmed deprecation warning fires: `'disabled_rest_categories' and 'disabled_transport_categories' are deprecated. Use 'disabled_categories' instead`
+- Confirmed auth-only warning fires: `Auth-related audit categories [...] are enabled but will not produce events as no authentication layer is active`
+- Confirmed remote address captured: `"audit_request_remote_address":"172.19.0.1"` (Docker gateway = Mac's IP from container's perspective)
+- Confirmed wildcard indices preserved as raw string: `"audit_trace_indices":["my-*"]`
+- Confirmed 404 requests still audited: `"audit_trace_indices":["does-not-exist"]`
+- Confirmed task correlation IDs present: `audit_trace_task_id` + `audit_trace_task_parent_id` on child actions (bulk → bulk shard)
+- Created `DOCKER_TESTING_COMMANDS.md` reference guide
+- Set up config for testing unified `disabled_categories` precedence over split settings (GRANTED_PRIVILEGES in split only, not in unified — if unified wins it shows in the auth warning)
+- Set up `clientauth_mode: OPTIONAL` for CN/SAN testing tomorrow
+
+### Code/file changes:
+- Created `docker/Dockerfile` (unused — went with volume mount approach instead)
+- Created `docker/docker-compose.yml` — volume mounts for plugin, opensearch.yml, and certs
+- Created `docker/opensearch.yml` — SSL-only mode, log4j sink, unified disabled_categories, deprecated split settings, mTLS OPTIONAL
+- Created `docker/certs/` — root-ca.pem, root-ca-key.pem, node.pem, node-key.pem, client.pem, client-key.pem
+- Created `docker/plugin/` — unzipped plugin with patched version descriptor
+- Created `DOCKER_TESTING_COMMANDS.md` — Terminal 1/2 commands, grep filters, rebuild instructions
+
+### Key learnings:
+- Plugin version must match OpenSearch version exactly — `opensearch-plugin install` does strict checking. Patching `plugin-descriptor.properties` is a workaround for testing.
+- Volume mount replaces the bundled plugin without needing to build a custom Docker image — faster iteration cycle (rebuild plugin, unzip, restart container)
+- Log4j audit sink writes to stdout in Docker (not a file) — `docker logs` is how you view them
+- Internal cluster operations (NodesStatsRequest, IndicesStatsRequest) fire every ~30 seconds from OpenSearch's own monitoring — these don't have `remote_address` since they're internal. User requests have `172.19.0.1`.
+- `docker logs -f` follows in real time. Use two terminals: one watching logs, one sending requests.
+- `docker exec -it <container> bash` gets you inside but audit logs aren't in a file (they're stdout), so `docker logs` from the Mac is the way to view them.
+
+### Decisions:
+- Used volume mount approach over Dockerfile approach — simpler, faster iteration, no image rebuild needed
+- Used log4j sink for visual verification — events appear in `docker logs` immediately
+- Set up unified vs split category test: GRANTED_PRIVILEGES only in split (ignored if unified takes precedence) — provable by checking the auth-only warning message
+- Generated client cert with identifiable CN (`taiwo`) for easy visual confirmation in audit events
+
+### Still testing tomorrow:
+- CN/SAN: curl with `--cert client.pem --key client-key.pem` → verify `audit_request_effective_user` contains `CN=taiwo`
+- Unified disabled_categories precedence: verify GRANTED_PRIVILEGES appears in auth-only warning (proves split was ignored)
+- Without client cert: verify only IP appears (no effective_user field)
+
+---
+
+### Testing results (same day, evening):
+
+**Unified disabled_categories precedence — CONFIRMED:**
+- Auth-only warning: `[API_TOKEN_WRITE, OPENDISTRO_SECURITY_INDEX_ATTEMPT, GRANTED_PRIVILEGES]`
+- GRANTED_PRIVILEGES appears in warning (meaning it's "enabled") → proves split settings (which had it disabled) were IGNORED
+- AUTHENTICATED, FAILED_LOGIN, MISSING_PRIVILEGES NOT in warning → correctly disabled by unified setting
+
+**CN/SAN identity enrichment — CONFIRMED:**
+- Without cert: `"audit_request_remote_address":"172.19.0.1"` only, no effective_user field
+- With cert: `"audit_request_remote_address":"172.19.0.1","audit_request_effective_user":"O=amazon,OU=intern,CN=taiwo"`
+- IP is always present (from TCP connection), effective_user is additive (from client cert)
+
+**Deprecation warning — CONFIRMED:**
+- `'disabled_rest_categories' and 'disabled_transport_categories' are deprecated. Use 'disabled_categories' instead to apply to both layers.`

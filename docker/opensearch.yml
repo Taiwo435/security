@@ -1,0 +1,42 @@
+# Cluster
+cluster.name: audit-test-cluster
+node.name: node-1
+
+# Network
+network.host: 0.0.0.0
+
+# SSL-only mode — no auth, no RBAC, just TLS + audit
+plugins.security.ssl_only: true
+
+# TLS - Transport
+plugins.security.ssl.transport.enabled: true
+plugins.security.ssl.transport.pemcert_filepath: certs/node.pem
+plugins.security.ssl.transport.pemkey_filepath: certs/node-key.pem
+plugins.security.ssl.transport.pemtrustedcas_filepath: certs/root-ca.pem
+plugins.security.ssl.transport.enforce_hostname_verification: false
+
+# TLS - REST/HTTP (with client cert auth OPTIONAL for CN/SAN testing)
+plugins.security.ssl.http.enabled: true
+plugins.security.ssl.http.pemcert_filepath: certs/node.pem
+plugins.security.ssl.http.pemkey_filepath: certs/node-key.pem
+plugins.security.ssl.http.pemtrustedcas_filepath: certs/root-ca.pem
+plugins.security.ssl.http.clientauth_mode: OPTIONAL
+
+# Standalone Audit Logging
+plugins.security.audit.type: log4j
+plugins.security.audit.config.log4j.logger_name: audit
+plugins.security.audit.config.log4j.level: INFO
+
+# Unified disabled_categories — takes precedence over split settings
+plugins.security.audit.config.disabled_categories:
+  - AUTHENTICATED
+  - FAILED_LOGIN
+  - MISSING_PRIVILEGES
+
+# Deprecated split settings (should be IGNORED because unified is present)
+opendistro_security.audit.config.disabled_rest_categories:
+  - SSL_EXCEPTION
+  - GRANTED_PRIVILEGES
+opendistro_security.audit.config.disabled_transport_categories:
+  - SSL_EXCEPTION
+  - GRANTED_PRIVILEGES

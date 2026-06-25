@@ -1,0 +1,24 @@
+version: '3'
+services:
+  opensearch:
+    image: opensearchproject/opensearch:latest
+    container_name: opensearch-audit-test
+    environment:
+      - discovery.type=single-node
+      - DISABLE_INSTALL_DEMO_CONFIG=true
+      - "OPENSEARCH_JAVA_OPTS=-Xms512m -Xmx512m"
+    volumes:
+      # Mount our custom security plugin (replacing the bundled one)
+      - /Users/muzzajol/Desktop/security/docker/plugin:/usr/share/opensearch/plugins/opensearch-security
+      # Mount our opensearch.yml config
+      - /Users/muzzajol/Desktop/security/docker/opensearch.yml:/usr/share/opensearch/config/opensearch.yml
+      # Mount TLS certs
+      - /Users/muzzajol/Desktop/security/docker/certs:/usr/share/opensearch/config/certs
+    ports:
+      - "9200:9200"
+      - "9600:9600"
+    networks:
+      - opensearch-net
+
+networks:
+  opensearch-net:
