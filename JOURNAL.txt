@@ -536,3 +536,41 @@ The integration tests validate the full pipeline end-to-end: field-level asserti
 - Phase 2 request body logging should consider NOT logging sensitive field values (learned from compliance PII issue)
 
 ### No code changes today — research only
+
+---
+
+## 2026-06-26 (Day 8)
+
+### What we did:
+- Implemented request body logging with sensitive header exclusion
+- Implemented ignore-users and ignore-requests filtering
+- Researched how FGAC captures headers/body (REST layer via addRestRequestInfo → AuditMessage)
+- Understood the full FGAC audit pipeline: SecurityRestFilter → AbstractAuditLog → AuditMessage → RequestResolver
+
+### Code changes:
+
+**ConfigConstants.java:**
+- Added `SECURITY_AUDIT_REST_HEADERS` — ThreadContext key for passing REST headers to transport layer
+
+**OpenSearchSecurityPlugin.java:**
+- REST wrapper now stashes `request.getHeaders()` into ThreadContext
+- Passes `settings` to AuditActionFilter constructor
+
+**AuditActionFilter.java:**
+- Reads `log_request_body`, `exclude_sensitive_headers`, `ignore_users`, `ignore_requests` from Settings
+- Early-return checks: skips internal:* actions, ignored users, ignored requests
+- Pulls headers from ThreadContext, strips Authorization header (case-insensitive via WildcardMatcher)
+- Extracts body from transport request: SearchRequest.source(), IndexRequest.source(), UpdateRequest.doc().source()
+- Uses existing AuditMessage methods: addRestHeaders(), addMapToRequestBody(), addTupleToRequestBody()
+
+### Design decisions:
+- Headers stashed in ThreadContext at REST wrapper (same pattern as IP/cert) because headers don't propagate to transport layer
+- Body extracted from transport request objects (not ThreadContext) to avoid size concerns
+- Follows FGAC behavior: Authorization header stripped, body redacted on sensitive paths, kibanaserver ignored by default
+- Single event still maintained — no fragmentation
+
+### What we learned:
+- FGAC captures headers+body at REST layer (where HTTP request exists) in a separate event
+- Our approach captures both in a single transport-layer event by stashing headers and pulling body from parsed request
+- WildcardMatcher is a utility class in the security plugin for pattern matching (supports *, case-insensitive)
+- ConfigConstants is for internal coordination keys (ThreadContext) AND user-facing settings (opensearch.yml)

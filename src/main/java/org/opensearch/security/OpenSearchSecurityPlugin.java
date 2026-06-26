@@ -857,6 +857,12 @@ public final class OpenSearchSecurityPlugin extends OpenSearchSecuritySSLPlugin
                         }
                     }
 
+                    // Store REST headers in ThreadContext for audit logging
+                    Map<String, List<String>> headers = request.getHeaders();
+                    if (headers != null && !headers.isEmpty()) {
+                        threadContext.putTransient(ConfigConstants.SECURITY_AUDIT_REST_HEADERS, headers);
+                    }
+
                     rh.handleRequest(request, channel, client);
                 }
 
@@ -1055,7 +1061,7 @@ public final class OpenSearchSecurityPlugin extends OpenSearchSecuritySSLPlugin
         
         // !(auditLog instanceof NullAuditLog) prevents registering AuditActionFilter when there's no real sink to send events to. No point intercepting every request just to discard the message.
         } else if (!client && auditLog != null && !(auditLog instanceof NullAuditLog)) {  
-            filters.add(new AuditActionFilter(auditLog, cs, threadPool));
+            filters.add(new AuditActionFilter(auditLog, cs, threadPool, settings));
         }
         return filters;
     }

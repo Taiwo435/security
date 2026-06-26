@@ -123,9 +123,9 @@ The prototype commit (`4fa7be5d`) proves the concept with ~30 lines of productio
 - [x] Verify all sinks work end-to-end (Log4j, internal index, external ES, webhook, Kafka)
 - [x] Client cert identity enrichment — CN/SAN from peer cert when mTLS configured (effective_user field)
 - [x] User identity enrichment — read user from ThreadContext when FGAC coexists
-- [ ] Request body logging with sensitive header exclusion
+- [x] Request body logging with sensitive header exclusion
 - [ ] Index resolution and bulk request handling
-- [ ] Ignore-users and ignore-requests filtering
+- [x] Ignore-users and ignore-requests filtering
 - [ ] Performance testing (AuditActionFilter overhead on latency/throughput)
 
 ### Phase 3 (Weeks 9–12): Stretch Goals

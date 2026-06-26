@@ -64,7 +64,7 @@ public class AuditActionFilterTest {
         when(clusterService.localNode()).thenReturn(node);
         when(clusterService.getClusterName()).thenReturn(new ClusterName("test-cluster"));
 
-        filter = new AuditActionFilter(auditLog, clusterService, threadPool);
+        filter = new AuditActionFilter(auditLog, clusterService, threadPool, org.opensearch.common.settings.Settings.EMPTY);
     }
 
     @SuppressWarnings("unchecked")
