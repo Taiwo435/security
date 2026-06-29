@@ -17,10 +17,12 @@ import org.opensearch.action.ActionRequest;
 import org.opensearch.action.IndicesRequest;
 import org.opensearch.action.index.IndexRequest;
 import org.opensearch.action.search.SearchRequest;
+import org.opensearch.action.support.IndicesOptions;
 import org.opensearch.action.update.UpdateRequest;
 import org.opensearch.action.support.ActionFilter;
 import org.opensearch.action.support.ActionFilterChain;
 import org.opensearch.action.support.ActionRequestMetadata;
+import org.opensearch.cluster.metadata.IndexNameExpressionResolver;
 import org.opensearch.cluster.service.ClusterService;
 import org.opensearch.common.collect.Tuple;
 import org.opensearch.common.settings.Settings;
@@ -56,8 +58,10 @@ public class AuditActionFilter implements ActionFilter {
     private final AuditLog auditLog;
     private final ClusterService clusterService;
     private final ThreadPool threadPool;
+    private final IndexNameExpressionResolver resolver;
     private final boolean logRequestBody;
     private final boolean excludeSensitiveHeaders;
+    private final boolean resolveIndices;
     private final WildcardMatcher ignoreUsersMatcher;
     private final WildcardMatcher ignoreRequestsMatcher;
 
@@ -65,11 +69,13 @@ public class AuditActionFilter implements ActionFilter {
         this.auditLog = auditLog;
         this.clusterService = clusterService;
         this.threadPool = threadPool;
+        this.resolver = new IndexNameExpressionResolver(threadPool.getThreadContext());
         this.logRequestBody = settings.getAsBoolean(ConfigConstants.OPENDISTRO_SECURITY_AUDIT_LOG_REQUEST_BODY, true);
         this.excludeSensitiveHeaders = settings.getAsBoolean(
             ConfigConstants.OPENDISTRO_SECURITY_AUDIT_EXCLUDE_SENSITIVE_HEADERS,
             true
         );
+        this.resolveIndices = settings.getAsBoolean(ConfigConstants.OPENDISTRO_SECURITY_AUDIT_RESOLVE_INDICES, true);
         List<String> ignoreUsers = settings.getAsList(ConfigConstants.OPENDISTRO_SECURITY_AUDIT_IGNORE_USERS, Collections.singletonList("kibanaserver"));
         this.ignoreUsersMatcher = WildcardMatcher.from(ignoreUsers);
         List<String> ignoreRequests = settings.getAsList(ConfigConstants.OPENDISTRO_SECURITY_AUDIT_IGNORE_REQUESTS, Collections.emptyList());
@@ -128,7 +134,22 @@ public class AuditActionFilter implements ActionFilter {
 
         // Target indices
         if (request instanceof IndicesRequest) {
-            msg.addIndices(((IndicesRequest) request).indices());
+            String[] indices = ((IndicesRequest) request).indices();
+            msg.addIndices(indices);
+
+            // Resolve wildcards to actual index names
+            if (resolveIndices && indices != null && indices.length > 0) {
+                try {
+                    String[] resolved = resolver.concreteIndexNames(
+                        clusterService.state(),
+                        IndicesOptions.lenientExpandOpen(),
+                        indices
+                    );
+                    msg.addResolvedIndices(resolved);
+                } catch (Exception e) {
+                    // Index resolution can fail if cluster state isn't ready — log raw indices only
+                }
+            }
         }
 
         // Task ID

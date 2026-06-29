@@ -124,7 +124,7 @@ The prototype commit (`4fa7be5d`) proves the concept with ~30 lines of productio
 - [x] Client cert identity enrichment — CN/SAN from peer cert when mTLS configured (effective_user field)
 - [x] User identity enrichment — read user from ThreadContext when FGAC coexists
 - [x] Request body logging with sensitive header exclusion
-- [ ] Index resolution and bulk request handling
+- [x] Index resolution and bulk request handling
 - [x] Ignore-users and ignore-requests filtering
 - [ ] Performance testing (AuditActionFilter overhead on latency/throughput)
 

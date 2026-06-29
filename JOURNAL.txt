@@ -569,8 +569,34 @@ The integration tests validate the full pipeline end-to-end: field-level asserti
 - Follows FGAC behavior: Authorization header stripped, body redacted on sensitive paths, kibanaserver ignored by default
 - Single event still maintained — no fragmentation
 
+### here's the flow:
+  
+- REST wrapper grabs headers from the HTTP request → stashes them in ThreadContext
+- Request moves to transport layer → your AuditActionFilter fires
+- Filter pulls headers out of ThreadContext + pulls body from the transport request
+- Both go into the same single audit event
+
+
 ### What we learned:
 - FGAC captures headers+body at REST layer (where HTTP request exists) in a separate event
 - Our approach captures both in a single transport-layer event by stashing headers and pulling body from parsed request
 - WildcardMatcher is a utility class in the security plugin for pattern matching (supports *, case-insensitive)
 - ConfigConstants is for internal coordination keys (ThreadContext) AND user-facing settings (opensearch.yml)
+
+---
+
+### Index resolution (same day, afternoon):
+
+**What we did:**
+- Implemented index resolution in AuditActionFilter
+- Uses IndexNameExpressionResolver to expand wildcards (e.g., `my-*` → `[my-index, my-logs]`)
+- Respects `resolve_indices` setting (default: true)
+- Try/catch around resolution for safety if cluster state isn't ready
+
+**Code changes:**
+- AuditActionFilter.java: added IndexNameExpressionResolver field, resolveIndices setting, resolution logic after raw indices logging
+- No new files or constants needed — reused existing OPENDISTRO_SECURITY_AUDIT_RESOLVE_INDICES constant
+
+**Audit event now produces both:**
+- `audit_trace_indices`: raw patterns user sent (e.g., `["my-*"]`)
+- `audit_trace_resolved_indices`: actual matching indices (e.g., `["my-index", "my-logs"]`)
