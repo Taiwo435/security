@@ -600,3 +600,16 @@ The integration tests validate the full pipeline end-to-end: field-level asserti
 **Audit event now produces both:**
 - `audit_trace_indices`: raw patterns user sent (e.g., `["my-*"]`)
 - `audit_trace_resolved_indices`: actual matching indices (e.g., `["my-index", "my-logs"]`)
+
+---
+
+### Bulk request handling (same day, continued):
+
+**What we did:**
+- Implemented bulk request handling in AuditActionFilter
+- When `resolve_bulk_requests: true`, iterates over BulkShardRequest.items() and logs one event per sub-operation
+- Each sub-event includes: specific index, doc ID, shard ID, request type, body (for index ops), headers, user, IP, task ID
+- When `resolve_bulk_requests: false` (default), logs one event for the whole bulk
+
+**Code changes:**
+- AuditActionFilter.java: added BulkShardRequest/BulkItemRequest/DocWriteRequest imports, resolveBulkRequests setting, bulk iteration logic as early-return path before normal single-event logging

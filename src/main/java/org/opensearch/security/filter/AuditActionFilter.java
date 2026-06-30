@@ -14,7 +14,10 @@ import java.util.List;
 import java.util.Map;
 
 import org.opensearch.action.ActionRequest;
+import org.opensearch.action.DocWriteRequest;
 import org.opensearch.action.IndicesRequest;
+import org.opensearch.action.bulk.BulkItemRequest;
+import org.opensearch.action.bulk.BulkShardRequest;
 import org.opensearch.action.index.IndexRequest;
 import org.opensearch.action.search.SearchRequest;
 import org.opensearch.action.support.IndicesOptions;
@@ -62,6 +65,7 @@ public class AuditActionFilter implements ActionFilter {
     private final boolean logRequestBody;
     private final boolean excludeSensitiveHeaders;
     private final boolean resolveIndices;
+    private final boolean resolveBulkRequests;
     private final WildcardMatcher ignoreUsersMatcher;
     private final WildcardMatcher ignoreRequestsMatcher;
 
@@ -76,6 +80,7 @@ public class AuditActionFilter implements ActionFilter {
             true
         );
         this.resolveIndices = settings.getAsBoolean(ConfigConstants.OPENDISTRO_SECURITY_AUDIT_RESOLVE_INDICES, true);
+        this.resolveBulkRequests = settings.getAsBoolean(ConfigConstants.OPENDISTRO_SECURITY_AUDIT_RESOLVE_BULK_REQUESTS, false);
         List<String> ignoreUsers = settings.getAsList(ConfigConstants.OPENDISTRO_SECURITY_AUDIT_IGNORE_USERS, Collections.singletonList("kibanaserver"));
         this.ignoreUsersMatcher = WildcardMatcher.from(ignoreUsers);
         List<String> ignoreRequests = settings.getAsList(ConfigConstants.OPENDISTRO_SECURITY_AUDIT_IGNORE_REQUESTS, Collections.emptyList());
@@ -113,6 +118,58 @@ public class AuditActionFilter implements ActionFilter {
 
         // Skip ignored requests (matches action name or request class name)
         if (ignoreRequestsMatcher.test(action) || ignoreRequestsMatcher.test(request.getClass().getSimpleName())) {
+            chain.proceed(task, action, request, listener);
+            return;
+        }
+
+        // Bulk request handling — log each sub-operation separately
+        if (resolveBulkRequests && request instanceof BulkShardRequest) {
+            BulkShardRequest bulkRequest = (BulkShardRequest) request;
+            TransportAddress remoteAddress = request.remoteAddress();
+            if (remoteAddress == null) {
+                remoteAddress = threadPool.getThreadContext().getTransient(ConfigConstants.OPENDISTRO_SECURITY_REMOTE_ADDRESS);
+            }
+
+            Map<String, List<String>> headers = threadPool.getThreadContext()
+                .getTransient(ConfigConstants.SECURITY_AUDIT_REST_HEADERS);
+            Map<String, List<String>> filteredHeaders = null;
+            if (headers != null && !headers.isEmpty()) {
+                filteredHeaders = new HashMap<>(headers);
+                if (excludeSensitiveHeaders) {
+                    filteredHeaders.keySet().removeIf(AUTHORIZATION_HEADER);
+                }
+            }
+
+            for (BulkItemRequest item : bulkRequest.items()) {
+                DocWriteRequest<?> innerRequest = item.request();
+                AuditMessage msg = new AuditMessage(AuditCategory.REQUEST_AUDIT, clusterService, Origin.REST, Origin.TRANSPORT);
+
+                msg.addRemoteAddress(remoteAddress);
+                msg.addPrivilege(action);
+                msg.addRequestType(innerRequest.getClass().getSimpleName());
+                msg.addIndices(new String[]{innerRequest.index()});
+                msg.addId(innerRequest.id());
+                msg.addShardId(bulkRequest.shardId());
+
+                if (task != null) {
+                    msg.addTaskId(task.getId());
+                }
+                if (effectiveUser != null) {
+                    msg.addEffectiveUser(effectiveUser);
+                }
+                if (filteredHeaders != null) {
+                    msg.addRestHeaders(filteredHeaders, false, null);
+                }
+                if (logRequestBody && innerRequest instanceof IndexRequest) {
+                    IndexRequest ir = (IndexRequest) innerRequest;
+                    if (ir.source() != null) {
+                        msg.addTupleToRequestBody(new Tuple<MediaType, BytesReference>(ir.getContentType(), ir.source()));
+                    }
+                }
+
+                auditLog.logRequestAudit(msg);
+            }
+
             chain.proceed(task, action, request, listener);
             return;
         }
