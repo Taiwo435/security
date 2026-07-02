@@ -372,6 +372,15 @@ public final class OpenSearchSecurityPlugin extends OpenSearchSecuritySSLPlugin
             auditLogImpl.setConfig(AuditConfig.from(settings));
             auditLog = auditLogImpl;
             warnIfAuthCategoriesEnabled(settings);
+
+            // Register dynamic cluster setting listener for audit toggle
+            clusterService.getClusterSettings().addSettingsUpdateConsumer(
+                SecuritySettings.AUDIT_ENABLED_SETTING,
+                newValue -> {
+                    log.info("Audit logging dynamically {} via cluster setting", newValue ? "enabled" : "disabled");
+                    auditLogImpl.setEnabled(newValue);
+                }
+            );
         } else {
             auditLog = new NullAuditLog();
         }
@@ -1566,6 +1575,9 @@ public final class OpenSearchSecurityPlugin extends OpenSearchSecuritySSLPlugin
         // currently dual mode is supported only when ssl_only is enabled, but this stance would change in future
         settings.add(SecuritySettings.SSL_DUAL_MODE_SETTING);
         settings.add(SecuritySettings.LEGACY_OPENDISTRO_SSL_DUAL_MODE_SETTING);
+
+        // Dynamic audit toggle — works in all modes (FGAC, SSL-only, disabled)
+        settings.add(SecuritySettings.AUDIT_ENABLED_SETTING);
 
         // Protected index settings
         settings.add(

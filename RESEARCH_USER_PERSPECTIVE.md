@@ -49,7 +49,6 @@ Startup compliance config reads and internal cluster operations log with `user: 
 
 ## Things It Could Do Better
 
-- **Single event per user request** instead of fragmented REST + TRANSPORT + compliance events
 - **Correlation ID** stamped on all events from the same originating request
 - **Sane defaults** out of the box (currently: too noisy with everything on, useless with everything off)
 - **Separate destructive action category** instead of overloading INDEX_EVENT
@@ -85,10 +84,6 @@ Startup compliance config reads and internal cluster operations log with `user: 
 
 **Fix:** Startup validation that warns when auth-only categories are enabled with no auth stack active.
 
-### 4. Single event per request (by design)
-**Problem observed:** FGAC audit fragments one user request into 2-4+ events across REST and TRANSPORT layers with no correlation ID.
-
-**Fix:** `AuditActionFilter` fires once at the transport layer, producing one audit event per user action. Contains all context (IP, action, indices, user if available, task ID, node info) in a single log line. No fragmentation, no need for correlation IDs. no http request sent tho.
 
 ---
 
@@ -110,4 +105,15 @@ Startup compliance config reads and internal cluster operations log with `user: 
 - [AWS OpenSearch Audit Docs](https://docs.aws.amazon.com/opensearch-service/latest/developerguide/audit-logs.html)
 
 
+Questions
+
 Do we wanna log REST-specific metadata (HTTP method,path, headers) ?
+
+1. Are there managed service customers running without FGAC who've asked for audit logging? How are they solving it today (if at all)?
+  2. When customers have compliance requirements (SOC2, HIPAA), what do they tell AWS they need from audit that they're not currently getting?
+  3. What does the audit log delivery pipeline look like on the managed side? (CloudWatch? S3? Does the service add any fields or transformation on top of what the plugin produces?)
+  4. If my standalone audit work lands in open-source, what would need to happen for the managed service to adopt it? Are there blockers or extra requirements?
+  5. From your experience with managed service customers — when something goes wrong (data deleted, unauthorized access), what information do they wish they had in the audit trail that isn't there today?
+  6. Does the managed service ever override or filter audit categories on behalf of customers, or do customers get exactly what the open-source plugin emits?
+
+  

@@ -57,4 +57,11 @@ public class SecuritySettings {
         Setting.Property.Dynamic,
         Setting.Property.Sensitive
     );
+
+    public static final Setting<Boolean> AUDIT_ENABLED_SETTING = Setting.boolSetting(
+        ConfigConstants.SECURITY_AUDIT_ENABLED,
+        true,
+        Setting.Property.NodeScope,
+        Setting.Property.Dynamic
+    );
 }
