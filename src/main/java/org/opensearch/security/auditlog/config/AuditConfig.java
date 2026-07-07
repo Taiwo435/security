@@ -136,30 +136,30 @@ public class AuditConfig {
         @VisibleForTesting
         public static final Filter DEFAULT = Filter.from(Settings.EMPTY);
 
-        private final boolean isRestApiAuditEnabled;
-        private final boolean isTransportApiAuditEnabled;
-        private final boolean resolveBulkRequests;
-        private final boolean logRequestBody;
-        private final boolean resolveIndices;
-        private final boolean excludeSensitiveHeaders;
+        private volatile boolean isRestApiAuditEnabled;
+        private volatile boolean isTransportApiAuditEnabled;
+        private volatile boolean resolveBulkRequests;
+        private volatile boolean logRequestBody;
+        private volatile boolean resolveIndices;
+        private volatile boolean excludeSensitiveHeaders;
         @JsonProperty("ignore_users")
-        private final Set<String> ignoredAuditUsers;
+        private volatile Set<String> ignoredAuditUsers;
         @JsonProperty("ignore_requests")
-        private final Set<String> ignoredAuditRequests;
+        private volatile Set<String> ignoredAuditRequests;
         @JsonProperty("ignore_headers")
         private final Set<String> ignoredCustomHeaders;
         @JsonProperty("ignore_url_params")
         private Set<String> ignoredUrlParams;
-        private final WildcardMatcher ignoredAuditUsersMatcher;
-        private final WildcardMatcher ignoredAuditRequestsMatcher;
+        private volatile WildcardMatcher ignoredAuditUsersMatcher;
+        private volatile WildcardMatcher ignoredAuditRequestsMatcher;
         private final WildcardMatcher ignoredCustomHeadersMatcher;
         private WildcardMatcher ignoredUrlParamsMatcher;
         @JsonProperty("disabled_categories")
-        private final Set<AuditCategory> disabledCategories;
+        private volatile Set<AuditCategory> disabledCategories;
         @Deprecated
-        private final Set<AuditCategory> disabledRestCategories;
+        private volatile Set<AuditCategory> disabledRestCategories;
         @Deprecated
-        private final Set<AuditCategory> disabledTransportCategories;
+        private volatile Set<AuditCategory> disabledTransportCategories;
 
         @VisibleForTesting
         Filter(
@@ -546,6 +546,54 @@ public class AuditConfig {
          */
         public Set<AuditCategory> getDisabledCategories() {
             return disabledCategories;
+        }
+
+        // Dynamic setters for cluster settings updates
+
+        public void setLogRequestBody(boolean logRequestBody) {
+            this.logRequestBody = logRequestBody;
+        }
+
+        public void setResolveBulkRequests(boolean resolveBulkRequests) {
+            this.resolveBulkRequests = resolveBulkRequests;
+        }
+
+        public void setResolveIndices(boolean resolveIndices) {
+            this.resolveIndices = resolveIndices;
+        }
+
+        public void setExcludeSensitiveHeaders(boolean excludeSensitiveHeaders) {
+            this.excludeSensitiveHeaders = excludeSensitiveHeaders;
+        }
+
+        public void setRestApiAuditEnabled(boolean enabled) {
+            this.isRestApiAuditEnabled = enabled;
+        }
+
+        public void setTransportApiAuditEnabled(boolean enabled) {
+            this.isTransportApiAuditEnabled = enabled;
+        }
+
+        public void setIgnoredAuditUsers(List<String> users) {
+            this.ignoredAuditUsers = ImmutableSet.copyOf(users);
+            this.ignoredAuditUsersMatcher = WildcardMatcher.from(this.ignoredAuditUsers);
+        }
+
+        public void setIgnoredAuditRequests(List<String> requests) {
+            this.ignoredAuditRequests = ImmutableSet.copyOf(requests);
+            this.ignoredAuditRequestsMatcher = WildcardMatcher.from(this.ignoredAuditRequests);
+        }
+
+        public void setDisabledCategories(List<String> categories) {
+            this.disabledCategories = AuditCategory.parse(categories);
+        }
+
+        public void setDisabledRestCategories(List<String> categories) {
+            this.disabledRestCategories = AuditCategory.parse(categories);
+        }
+
+        public void setDisabledTransportCategories(List<String> categories) {
+            this.disabledTransportCategories = AuditCategory.parse(categories);
         }
 
         public void log(Logger logger) {

@@ -149,6 +149,10 @@ public abstract class AbstractAuditLog implements AuditLog {
         this.auditConfigFilter.log(log);
     }
 
+    public AuditConfig.Filter getFilter() {
+        return auditConfigFilter;
+    }
+
     protected void onComplianceConfigChanged(ComplianceConfig complianceConfig) {
         this.complianceConfig = complianceConfig;
         enableRoutes();

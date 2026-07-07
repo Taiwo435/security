@@ -391,6 +391,53 @@ public final class OpenSearchSecurityPlugin extends OpenSearchSecuritySSLPlugin
                 log.info("Audit logging dynamically {} via cluster setting", newValue ? "enabled" : "disabled");
                 auditLogImpl.setEnabled(newValue);
             });
+
+            // Register dynamic cluster setting listeners for audit filter settings
+            clusterService.getClusterSettings().addSettingsUpdateConsumer(SecuritySettings.AUDIT_LOG_REQUEST_BODY, newValue -> {
+                log.info("Audit log_request_body dynamically set to {}", newValue);
+                auditLogImpl.getFilter().setLogRequestBody(newValue);
+            });
+            clusterService.getClusterSettings().addSettingsUpdateConsumer(SecuritySettings.AUDIT_RESOLVE_BULK_REQUESTS, newValue -> {
+                log.info("Audit resolve_bulk_requests dynamically set to {}", newValue);
+                auditLogImpl.getFilter().setResolveBulkRequests(newValue);
+            });
+            clusterService.getClusterSettings().addSettingsUpdateConsumer(SecuritySettings.AUDIT_RESOLVE_INDICES, newValue -> {
+                log.info("Audit resolve_indices dynamically set to {}", newValue);
+                auditLogImpl.getFilter().setResolveIndices(newValue);
+            });
+            clusterService.getClusterSettings().addSettingsUpdateConsumer(SecuritySettings.AUDIT_EXCLUDE_SENSITIVE_HEADERS, newValue -> {
+                log.info("Audit exclude_sensitive_headers dynamically set to {}", newValue);
+                auditLogImpl.getFilter().setExcludeSensitiveHeaders(newValue);
+            });
+            clusterService.getClusterSettings().addSettingsUpdateConsumer(SecuritySettings.AUDIT_ENABLE_REST, newValue -> {
+                log.info("Audit enable_rest dynamically set to {}", newValue);
+                auditLogImpl.getFilter().setRestApiAuditEnabled(newValue);
+            });
+            clusterService.getClusterSettings().addSettingsUpdateConsumer(SecuritySettings.AUDIT_ENABLE_TRANSPORT, newValue -> {
+                log.info("Audit enable_transport dynamically set to {}", newValue);
+                auditLogImpl.getFilter().setTransportApiAuditEnabled(newValue);
+            });
+            clusterService.getClusterSettings().addSettingsUpdateConsumer(SecuritySettings.AUDIT_DISABLED_CATEGORIES, newValue -> {
+                log.info("Audit disabled_categories dynamically updated");
+                auditLogImpl.getFilter().setDisabledCategories(newValue);
+            });
+            clusterService.getClusterSettings().addSettingsUpdateConsumer(SecuritySettings.AUDIT_DISABLED_REST_CATEGORIES, newValue -> {
+                log.info("Audit disabled_rest_categories dynamically updated");
+                auditLogImpl.getFilter().setDisabledRestCategories(newValue);
+            });
+            clusterService.getClusterSettings()
+                .addSettingsUpdateConsumer(SecuritySettings.AUDIT_DISABLED_TRANSPORT_CATEGORIES, newValue -> {
+                    log.info("Audit disabled_transport_categories dynamically updated");
+                    auditLogImpl.getFilter().setDisabledTransportCategories(newValue);
+                });
+            clusterService.getClusterSettings().addSettingsUpdateConsumer(SecuritySettings.AUDIT_IGNORE_USERS, newValue -> {
+                log.info("Audit ignore_users dynamically updated");
+                auditLogImpl.getFilter().setIgnoredAuditUsers(newValue);
+            });
+            clusterService.getClusterSettings().addSettingsUpdateConsumer(SecuritySettings.AUDIT_IGNORE_REQUESTS, newValue -> {
+                log.info("Audit ignore_requests dynamically updated");
+                auditLogImpl.getFilter().setIgnoredAuditRequests(newValue);
+            });
         } else {
             auditLog = new NullAuditLog();
         }
@@ -1829,46 +1876,32 @@ public final class OpenSearchSecurityPlugin extends OpenSearchSecuritySSLPlugin
             )
         );
 
-        final BiFunction<String, Boolean, Setting<Boolean>> boolSettingNodeScopeFiltered = (
-            String keyWithNamespace,
-            Boolean value) -> Setting.boolSetting(keyWithNamespace, value, Property.NodeScope, Property.Filtered);
-
         Arrays.stream(FilterEntries.values()).map(filterEntry -> {
             switch (filterEntry) {
                 case DISABLE_CATEGORIES:
-                    return Setting.listSetting(
-                        filterEntry.getKeyWithNamespace(),
-                        Collections.emptyList(),
-                        Function.identity(),
-                        Property.NodeScope
-                    );
+                    return SecuritySettings.AUDIT_DISABLED_CATEGORIES;
                 case DISABLE_REST_CATEGORIES:
+                    return SecuritySettings.AUDIT_DISABLED_REST_CATEGORIES;
                 case DISABLE_TRANSPORT_CATEGORIES:
-                    return Setting.listSetting(
-                        filterEntry.getKeyWithNamespace(),
-                        disabledCategories,
-                        Function.identity(),
-                        Property.NodeScope
-                    );
+                    return SecuritySettings.AUDIT_DISABLED_TRANSPORT_CATEGORIES;
                 case IGNORE_REQUESTS:
+                    return SecuritySettings.AUDIT_IGNORE_REQUESTS;
                 case IGNORE_HEADERS:
-                    return Setting.listSetting(
-                        filterEntry.getKeyWithNamespace(),
-                        Collections.emptyList(),
-                        Function.identity(),
-                        Property.NodeScope
-                    );
+                    return SecuritySettings.AUDIT_IGNORE_HEADERS;
                 case IGNORE_USERS:
-                    return Setting.listSetting(filterEntry.getKeyWithNamespace(), ignoredUsers, Function.identity(), Property.NodeScope);
-                // All boolean settings with default of true
+                    return SecuritySettings.AUDIT_IGNORE_USERS;
                 case ENABLE_REST:
+                    return SecuritySettings.AUDIT_ENABLE_REST;
                 case ENABLE_TRANSPORT:
+                    return SecuritySettings.AUDIT_ENABLE_TRANSPORT;
                 case EXCLUDE_SENSITIVE_HEADERS:
+                    return SecuritySettings.AUDIT_EXCLUDE_SENSITIVE_HEADERS;
                 case LOG_REQUEST_BODY:
+                    return SecuritySettings.AUDIT_LOG_REQUEST_BODY;
                 case RESOLVE_INDICES:
-                    return boolSettingNodeScopeFiltered.apply(filterEntry.getKeyWithNamespace(), true);
+                    return SecuritySettings.AUDIT_RESOLVE_INDICES;
                 case RESOLVE_BULK_REQUESTS:
-                    return boolSettingNodeScopeFiltered.apply(filterEntry.getKeyWithNamespace(), false);
+                    return SecuritySettings.AUDIT_RESOLVE_BULK_REQUESTS;
                 default:
                     throw new RuntimeException("Please add support for new FilterEntries value '" + filterEntry.name() + "'");
             }
