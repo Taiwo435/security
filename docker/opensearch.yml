@@ -28,38 +28,38 @@ plugins.security.audit.config.log4j.logger_name: audit
 plugins.security.audit.config.log4j.level: INFO
 
 # Log request body
-opendistro_security.audit.log_request_body: true
+plugins.security.audit.config.log_request_body: true
 
 # Log headers (exclude Authorization)
-opendistro_security.audit.exclude_sensitive_headers: true
+plugins.security.audit.config.exclude_sensitive_headers: true
 
 # Resolve wildcards to actual indices
-opendistro_security.audit.resolve_indices: true
+plugins.security.audit.config.resolve_indices: true
 
 # Resolve bulk sub-operations individually
-opendistro_security.audit.resolve_bulk_requests: true
+plugins.security.audit.config.resolve_bulk_requests: true
 
 # Ignore kibanaserver user (demo: show this works)
-opendistro_security.audit.ignore_users:
+plugins.security.audit.config.ignore_users:
   - kibanaserver
 
 # Ignore internal cluster noise
-opendistro_security.audit.ignore_requests:
+plugins.security.audit.config.ignore_requests:
   - "cluster:monitor/*"
   - "indices:monitor/*"
   - "indices:admin/seq_no/*"
   - "indices:admin/mapping/auto_put"
   - "indices:admin/auto_create"
 
-# Unified disabled_categories (takes precedence over split settings)
+# Unified disabled_categories (works in tandem with split settings)
 plugins.security.audit.config.disabled_categories:
   - AUTHENTICATED
   - GRANTED_PRIVILEGES
 
-# Deprecated split settings (should be IGNORED because unified is present)
-opendistro_security.audit.config.disabled_rest_categories:
+# Split settings (both unified and split apply additively)
+plugins.security.audit.config.disabled_rest_categories:
   - SSL_EXCEPTION
   - BAD_HEADERS
-opendistro_security.audit.config.disabled_transport_categories:
+plugins.security.audit.config.disabled_transport_categories:
   - SSL_EXCEPTION
   - BAD_HEADERS
