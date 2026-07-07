@@ -1836,13 +1836,6 @@ public final class OpenSearchSecurityPlugin extends OpenSearchSecuritySSLPlugin
                         Function.identity(),
                         Property.NodeScope
                     );
-                case DISABLE_CATEGORIES:
-                    return Setting.listSetting(
-                        filterEntry.getKeyWithNamespace(),
-                        Collections.emptyList(),
-                        Function.identity(),
-                        Property.NodeScope
-                    );
                 case IGNORE_REQUESTS:
                 case IGNORE_HEADERS:
                     return Setting.listSetting(

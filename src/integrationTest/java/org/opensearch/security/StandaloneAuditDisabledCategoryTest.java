@@ -38,7 +38,7 @@ public class StandaloneAuditDisabledCategoryTest {
             Map.of(
                 ConfigConstants.SECURITY_SSL_ONLY, true,
                 "plugins.security.audit.type", TestRuleAuditLogSink.class.getName(),
-                ConfigConstants.SECURITY_AUDIT_CONFIG_DISABLED_CATEGORIES, List.of("REQUEST_AUDIT")
+                ConfigConstants.OPENDISTRO_SECURITY_AUDIT_CONFIG_DISABLED_CATEGORIES, List.of("REQUEST_AUDIT")
             )
         )
         .sslOnly(true)
