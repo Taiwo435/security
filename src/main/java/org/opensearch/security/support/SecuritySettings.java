@@ -73,56 +73,92 @@ public class SecuritySettings {
     private static final String AUDIT_CONFIG_PREFIX = "plugins.security.audit.config.";
 
     public static final Setting<Boolean> AUDIT_LOG_REQUEST_BODY = Setting.boolSetting(
-        AUDIT_CONFIG_PREFIX + "log_request_body", true, Setting.Property.NodeScope, Setting.Property.Dynamic
+        AUDIT_CONFIG_PREFIX + "log_request_body",
+        true,
+        Setting.Property.NodeScope,
+        Setting.Property.Dynamic
     );
 
     public static final Setting<Boolean> AUDIT_RESOLVE_BULK_REQUESTS = Setting.boolSetting(
-        AUDIT_CONFIG_PREFIX + "resolve_bulk_requests", false, Setting.Property.NodeScope, Setting.Property.Dynamic
+        AUDIT_CONFIG_PREFIX + "resolve_bulk_requests",
+        false,
+        Setting.Property.NodeScope,
+        Setting.Property.Dynamic
     );
 
     public static final Setting<Boolean> AUDIT_RESOLVE_INDICES = Setting.boolSetting(
-        AUDIT_CONFIG_PREFIX + "resolve_indices", true, Setting.Property.NodeScope, Setting.Property.Dynamic
+        AUDIT_CONFIG_PREFIX + "resolve_indices",
+        true,
+        Setting.Property.NodeScope,
+        Setting.Property.Dynamic
     );
 
     public static final Setting<Boolean> AUDIT_EXCLUDE_SENSITIVE_HEADERS = Setting.boolSetting(
-        AUDIT_CONFIG_PREFIX + "exclude_sensitive_headers", true, Setting.Property.NodeScope, Setting.Property.Dynamic
+        AUDIT_CONFIG_PREFIX + "exclude_sensitive_headers",
+        true,
+        Setting.Property.NodeScope,
+        Setting.Property.Dynamic
     );
 
     public static final Setting<Boolean> AUDIT_ENABLE_REST = Setting.boolSetting(
-        AUDIT_CONFIG_PREFIX + "enable_rest", true, Setting.Property.NodeScope, Setting.Property.Dynamic
+        AUDIT_CONFIG_PREFIX + "enable_rest",
+        true,
+        Setting.Property.NodeScope,
+        Setting.Property.Dynamic
     );
 
     public static final Setting<Boolean> AUDIT_ENABLE_TRANSPORT = Setting.boolSetting(
-        AUDIT_CONFIG_PREFIX + "enable_transport", true, Setting.Property.NodeScope, Setting.Property.Dynamic
+        AUDIT_CONFIG_PREFIX + "enable_transport",
+        true,
+        Setting.Property.NodeScope,
+        Setting.Property.Dynamic
     );
 
     public static final Setting<List<String>> AUDIT_DISABLED_CATEGORIES = Setting.listSetting(
-        AUDIT_CONFIG_PREFIX + "disabled_categories", Collections.emptyList(), Function.identity(),
-        Setting.Property.NodeScope, Setting.Property.Dynamic
+        AUDIT_CONFIG_PREFIX + "disabled_categories",
+        Collections.emptyList(),
+        Function.identity(),
+        Setting.Property.NodeScope,
+        Setting.Property.Dynamic
     );
 
     public static final Setting<List<String>> AUDIT_DISABLED_REST_CATEGORIES = Setting.listSetting(
-        AUDIT_CONFIG_PREFIX + "disabled_rest_categories", List.of("AUTHENTICATED", "GRANTED_PRIVILEGES"), Function.identity(),
-        Setting.Property.NodeScope, Setting.Property.Dynamic
+        AUDIT_CONFIG_PREFIX + "disabled_rest_categories",
+        List.of("AUTHENTICATED", "GRANTED_PRIVILEGES"),
+        Function.identity(),
+        Setting.Property.NodeScope,
+        Setting.Property.Dynamic
     );
 
     public static final Setting<List<String>> AUDIT_DISABLED_TRANSPORT_CATEGORIES = Setting.listSetting(
-        AUDIT_CONFIG_PREFIX + "disabled_transport_categories", List.of("AUTHENTICATED", "GRANTED_PRIVILEGES"), Function.identity(),
-        Setting.Property.NodeScope, Setting.Property.Dynamic
+        AUDIT_CONFIG_PREFIX + "disabled_transport_categories",
+        List.of("AUTHENTICATED", "GRANTED_PRIVILEGES"),
+        Function.identity(),
+        Setting.Property.NodeScope,
+        Setting.Property.Dynamic
     );
 
     public static final Setting<List<String>> AUDIT_IGNORE_USERS = Setting.listSetting(
-        AUDIT_CONFIG_PREFIX + "ignore_users", List.of("kibanaserver"), Function.identity(),
-        Setting.Property.NodeScope, Setting.Property.Dynamic
+        AUDIT_CONFIG_PREFIX + "ignore_users",
+        List.of("kibanaserver"),
+        Function.identity(),
+        Setting.Property.NodeScope,
+        Setting.Property.Dynamic
     );
 
     public static final Setting<List<String>> AUDIT_IGNORE_REQUESTS = Setting.listSetting(
-        AUDIT_CONFIG_PREFIX + "ignore_requests", Collections.emptyList(), Function.identity(),
-        Setting.Property.NodeScope, Setting.Property.Dynamic
+        AUDIT_CONFIG_PREFIX + "ignore_requests",
+        Collections.emptyList(),
+        Function.identity(),
+        Setting.Property.NodeScope,
+        Setting.Property.Dynamic
     );
 
     public static final Setting<List<String>> AUDIT_IGNORE_HEADERS = Setting.listSetting(
-        AUDIT_CONFIG_PREFIX + "ignore_headers", Collections.emptyList(), Function.identity(),
-        Setting.Property.NodeScope, Setting.Property.Dynamic
+        AUDIT_CONFIG_PREFIX + "ignore_headers",
+        Collections.emptyList(),
+        Function.identity(),
+        Setting.Property.NodeScope,
+        Setting.Property.Dynamic
     );
 }
