@@ -45,3 +45,4 @@ gradle-build/
 .gradle/
 docker/certs/
 docker/fgac/
+docker/plugin/
