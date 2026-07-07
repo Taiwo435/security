@@ -36,10 +36,6 @@ import java.nio.file.attribute.PosixFilePermission;
 import java.security.MessageDigest;
 import java.security.cert.Certificate;
 import java.security.cert.X509Certificate;
-
-import javax.net.ssl.SSLEngine;
-
-import io.netty.handler.ssl.SslHandler;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collection;
@@ -59,6 +55,7 @@ import java.util.function.Supplier;
 import java.util.function.UnaryOperator;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
+import javax.net.ssl.SSLEngine;
 
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.Lists;
@@ -102,10 +99,10 @@ import org.opensearch.common.util.concurrent.ThreadContext;
 import org.opensearch.core.action.ActionListener;
 import org.opensearch.core.action.ActionResponse;
 import org.opensearch.core.common.io.stream.NamedWriteableRegistry;
+import org.opensearch.core.common.transport.TransportAddress;
 import org.opensearch.core.index.Index;
 import org.opensearch.core.indices.breaker.CircuitBreakerService;
 import org.opensearch.core.rest.RestStatus;
-import org.opensearch.core.common.transport.TransportAddress;
 import org.opensearch.core.transport.TransportResponse;
 import org.opensearch.core.xcontent.NamedXContentRegistry;
 import org.opensearch.env.Environment;
@@ -263,6 +260,8 @@ import org.opensearch.transport.client.node.NodeClient;
 import org.opensearch.transport.netty4.ssl.SecureNetty4Transport;
 import org.opensearch.watcher.ResourceWatcherService;
 
+import io.netty.handler.ssl.SslHandler;
+
 import static org.opensearch.http.HttpTransportSettings.SETTING_HTTP_HTTP3_ENABLED;
 import static org.opensearch.security.dlic.rest.api.RestApiAuthorizationEvaluator.ENDPOINTS_WITH_PERMISSIONS;
 import static org.opensearch.security.dlic.rest.api.RestApiAuthorizationEvaluator.SECURITY_CONFIG_UPDATE;
@@ -361,26 +360,37 @@ public final class OpenSearchSecurityPlugin extends OpenSearchSecuritySSLPlugin
      * stack is not bootstrapped. If audit type is configured, creates a real AuditLogImpl;
      * otherwise uses NullAuditLog.
      */
-    private void initStandaloneAuditIfEnabled(Client localClient, ThreadPool threadPool, ClusterService clusterService, Environment environment) {
+    private void initStandaloneAuditIfEnabled(
+        Client localClient,
+        ThreadPool threadPool,
+        ClusterService clusterService,
+        Environment environment
+    ) {
         this.threadPool = threadPool;
         this.cs = clusterService;
         this.localClient = localClient;
         final IndexNameExpressionResolver resolver = new IndexNameExpressionResolver(threadPool.getThreadContext());
         final String auditType = settings.get(ConfigConstants.SECURITY_AUDIT_TYPE_DEFAULT, null);
         if (auditType != null) {
-            AuditLogImpl auditLogImpl = new AuditLogImpl(settings, configPath, localClient, threadPool, resolver, clusterService, environment, new UserFactory.Simple());
+            AuditLogImpl auditLogImpl = new AuditLogImpl(
+                settings,
+                configPath,
+                localClient,
+                threadPool,
+                resolver,
+                clusterService,
+                environment,
+                new UserFactory.Simple()
+            );
             auditLogImpl.setConfig(AuditConfig.from(settings));
             auditLog = auditLogImpl;
             warnIfAuthCategoriesEnabled(settings);
 
             // Register dynamic cluster setting listener for audit toggle
-            clusterService.getClusterSettings().addSettingsUpdateConsumer(
-                SecuritySettings.AUDIT_ENABLED_SETTING,
-                newValue -> {
-                    log.info("Audit logging dynamically {} via cluster setting", newValue ? "enabled" : "disabled");
-                    auditLogImpl.setEnabled(newValue);
-                }
-            );
+            clusterService.getClusterSettings().addSettingsUpdateConsumer(SecuritySettings.AUDIT_ENABLED_SETTING, newValue -> {
+                log.info("Audit logging dynamically {} via cluster setting", newValue ? "enabled" : "disabled");
+                auditLogImpl.setEnabled(newValue);
+            });
         } else {
             auditLog = new NullAuditLog();
         }
@@ -392,8 +402,10 @@ public final class OpenSearchSecurityPlugin extends OpenSearchSecuritySSLPlugin
         enabledAuthOnly.removeAll(filter.getDisabledRestCategories());
         enabledAuthOnly.removeAll(filter.getDisabledTransportCategories());
         if (!enabledAuthOnly.isEmpty()) {
-            log.warn("Auth-related audit categories {} are enabled but will not produce events "
-                + "as no authentication layer is active.", enabledAuthOnly);
+            log.warn(
+                "Auth-related audit categories {} are enabled but will not produce events " + "as no authentication layer is active.",
+                enabledAuthOnly
+            );
         }
     }
 
@@ -840,10 +852,7 @@ public final class OpenSearchSecurityPlugin extends OpenSearchSecuritySSLPlugin
                     // Store remote address in ThreadContext so AuditActionFilter can read it
                     InetSocketAddress remoteAddress = request.getHttpChannel().getRemoteAddress();
                     if (remoteAddress != null) {
-                        threadContext.putTransient(
-                            ConfigConstants.OPENDISTRO_SECURITY_REMOTE_ADDRESS,
-                            new TransportAddress(remoteAddress)
-                        );
+                        threadContext.putTransient(ConfigConstants.OPENDISTRO_SECURITY_REMOTE_ADDRESS, new TransportAddress(remoteAddress));
                     }
 
                     // Extract client cert principal (CN/SAN) when mTLS is configured
@@ -854,8 +863,10 @@ public final class OpenSearchSecurityPlugin extends OpenSearchSecuritySSLPlugin
                             try {
                                 Certificate[] certs = engine.getSession().getPeerCertificates();
                                 if (certs != null && certs.length > 0 && certs[0] instanceof X509Certificate) {
-                                    String principal = new DefaultPrincipalExtractor()
-                                        .extractPrincipal((X509Certificate) certs[0], PrincipalExtractor.Type.HTTP);
+                                    String principal = new DefaultPrincipalExtractor().extractPrincipal(
+                                        (X509Certificate) certs[0],
+                                        PrincipalExtractor.Type.HTTP
+                                    );
                                     if (principal != null) {
                                         threadContext.putTransient(ConfigConstants.OPENDISTRO_SECURITY_SSL_PRINCIPAL, principal);
                                     }
@@ -1067,9 +1078,10 @@ public final class OpenSearchSecurityPlugin extends OpenSearchSecuritySSLPlugin
         List<ActionFilter> filters = new ArrayList<>(1);
         if (!client && !disabled && !SSLConfig.isSslOnlyMode()) {
             filters.add(Objects.requireNonNull(sf));
-        
-        // !(auditLog instanceof NullAuditLog) prevents registering AuditActionFilter when there's no real sink to send events to. No point intercepting every request just to discard the message.
-        } else if (!client && auditLog != null && !(auditLog instanceof NullAuditLog)) {  
+
+            // !(auditLog instanceof NullAuditLog) prevents registering AuditActionFilter when there's no real sink to send events to. No
+            // point intercepting every request just to discard the message.
+        } else if (!client && auditLog != null && !(auditLog instanceof NullAuditLog)) {
             filters.add(new AuditActionFilter(auditLog, cs, threadPool, settings));
         }
         return filters;
@@ -1741,12 +1753,7 @@ public final class OpenSearchSecurityPlugin extends OpenSearchSecuritySSLPlugin
         settings.add(Setting.groupSetting(ConfigConstants.SECURITY_AUDIT_CONFIG_ENDPOINTS + ".", Property.NodeScope));
         settings.add(Setting.intSetting(ConfigConstants.SECURITY_AUDIT_THREADPOOL_SIZE, 10, Property.NodeScope, Property.Filtered));
         settings.add(
-            Setting.intSetting(
-                ConfigConstants.SECURITY_AUDIT_THREADPOOL_MAX_QUEUE_LEN,
-                100 * 1000,
-                Property.NodeScope,
-                Property.Filtered
-            )
+            Setting.intSetting(ConfigConstants.SECURITY_AUDIT_THREADPOOL_MAX_QUEUE_LEN, 100 * 1000, Property.NodeScope, Property.Filtered)
         );
         settings.add(
             Setting.boolSetting(ConfigConstants.OPENDISTRO_SECURITY_AUDIT_LOG_REQUEST_BODY, true, Property.NodeScope, Property.Filtered)
@@ -1852,12 +1859,7 @@ public final class OpenSearchSecurityPlugin extends OpenSearchSecuritySSLPlugin
                         Property.NodeScope
                     );
                 case IGNORE_USERS:
-                    return Setting.listSetting(
-                        filterEntry.getKeyWithNamespace(),
-                        ignoredUsers,
-                        Function.identity(),
-                        Property.NodeScope
-                    );
+                    return Setting.listSetting(filterEntry.getKeyWithNamespace(), ignoredUsers, Function.identity(), Property.NodeScope);
                 // All boolean settings with default of true
                 case ENABLE_REST:
                 case ENABLE_TRANSPORT:
@@ -1898,8 +1900,7 @@ public final class OpenSearchSecurityPlugin extends OpenSearchSecuritySSLPlugin
         );
         settings.add(
             Setting.boolSetting(
-                ConfigConstants.SECURITY_AUDIT_CONFIG_DEFAULT_PREFIX
-                    + ConfigConstants.SECURITY_AUDIT_OPENSEARCH_DATASTREAM_TEMPLATE_MANAGE,
+                ConfigConstants.SECURITY_AUDIT_CONFIG_DEFAULT_PREFIX + ConfigConstants.SECURITY_AUDIT_OPENSEARCH_DATASTREAM_TEMPLATE_MANAGE,
                 true,
                 Property.NodeScope,
                 Property.Filtered
@@ -1907,8 +1908,7 @@ public final class OpenSearchSecurityPlugin extends OpenSearchSecuritySSLPlugin
         );
         settings.add(
             Setting.simpleString(
-                ConfigConstants.SECURITY_AUDIT_CONFIG_DEFAULT_PREFIX
-                    + ConfigConstants.SECURITY_AUDIT_OPENSEARCH_DATASTREAM_TEMPLATE_NAME,
+                ConfigConstants.SECURITY_AUDIT_CONFIG_DEFAULT_PREFIX + ConfigConstants.SECURITY_AUDIT_OPENSEARCH_DATASTREAM_TEMPLATE_NAME,
                 Property.NodeScope,
                 Property.Filtered
             )
@@ -1935,8 +1935,7 @@ public final class OpenSearchSecurityPlugin extends OpenSearchSecuritySSLPlugin
         // External OpenSearch
         settings.add(
             Setting.listSetting(
-                ConfigConstants.SECURITY_AUDIT_CONFIG_DEFAULT_PREFIX
-                    + ConfigConstants.SECURITY_AUDIT_EXTERNAL_OPENSEARCH_HTTP_ENDPOINTS,
+                ConfigConstants.SECURITY_AUDIT_CONFIG_DEFAULT_PREFIX + ConfigConstants.SECURITY_AUDIT_EXTERNAL_OPENSEARCH_HTTP_ENDPOINTS,
                 Lists.newArrayList("localhost:9200"),
                 Function.identity(),
                 Property.NodeScope
@@ -1966,8 +1965,7 @@ public final class OpenSearchSecurityPlugin extends OpenSearchSecuritySSLPlugin
         );
         settings.add(
             Setting.boolSetting(
-                ConfigConstants.SECURITY_AUDIT_CONFIG_DEFAULT_PREFIX
-                    + ConfigConstants.SECURITY_AUDIT_EXTERNAL_OPENSEARCH_VERIFY_HOSTNAMES,
+                ConfigConstants.SECURITY_AUDIT_CONFIG_DEFAULT_PREFIX + ConfigConstants.SECURITY_AUDIT_EXTERNAL_OPENSEARCH_VERIFY_HOSTNAMES,
                 true,
                 Property.NodeScope,
                 Property.Filtered
@@ -1984,40 +1982,35 @@ public final class OpenSearchSecurityPlugin extends OpenSearchSecuritySSLPlugin
         );
         settings.add(
             Setting.simpleString(
-                ConfigConstants.SECURITY_AUDIT_CONFIG_DEFAULT_PREFIX
-                    + ConfigConstants.SECURITY_AUDIT_EXTERNAL_OPENSEARCH_PEMCERT_CONTENT,
+                ConfigConstants.SECURITY_AUDIT_CONFIG_DEFAULT_PREFIX + ConfigConstants.SECURITY_AUDIT_EXTERNAL_OPENSEARCH_PEMCERT_CONTENT,
                 Property.NodeScope,
                 Property.Filtered
             )
         );
         settings.add(
             Setting.simpleString(
-                ConfigConstants.SECURITY_AUDIT_CONFIG_DEFAULT_PREFIX
-                    + ConfigConstants.SECURITY_AUDIT_EXTERNAL_OPENSEARCH_PEMCERT_FILEPATH,
+                ConfigConstants.SECURITY_AUDIT_CONFIG_DEFAULT_PREFIX + ConfigConstants.SECURITY_AUDIT_EXTERNAL_OPENSEARCH_PEMCERT_FILEPATH,
                 Property.NodeScope,
                 Property.Filtered
             )
         );
         settings.add(
             Setting.simpleString(
-                ConfigConstants.SECURITY_AUDIT_CONFIG_DEFAULT_PREFIX
-                    + ConfigConstants.SECURITY_AUDIT_EXTERNAL_OPENSEARCH_PEMKEY_CONTENT,
+                ConfigConstants.SECURITY_AUDIT_CONFIG_DEFAULT_PREFIX + ConfigConstants.SECURITY_AUDIT_EXTERNAL_OPENSEARCH_PEMKEY_CONTENT,
                 Property.NodeScope,
                 Property.Filtered
             )
         );
         settings.add(
             Setting.simpleString(
-                ConfigConstants.SECURITY_AUDIT_CONFIG_DEFAULT_PREFIX
-                    + ConfigConstants.SECURITY_AUDIT_EXTERNAL_OPENSEARCH_PEMKEY_FILEPATH,
+                ConfigConstants.SECURITY_AUDIT_CONFIG_DEFAULT_PREFIX + ConfigConstants.SECURITY_AUDIT_EXTERNAL_OPENSEARCH_PEMKEY_FILEPATH,
                 Property.NodeScope,
                 Property.Filtered
             )
         );
         settings.add(
             Setting.simpleString(
-                ConfigConstants.SECURITY_AUDIT_CONFIG_DEFAULT_PREFIX
-                    + ConfigConstants.SECURITY_AUDIT_EXTERNAL_OPENSEARCH_PEMKEY_PASSWORD,
+                ConfigConstants.SECURITY_AUDIT_CONFIG_DEFAULT_PREFIX + ConfigConstants.SECURITY_AUDIT_EXTERNAL_OPENSEARCH_PEMKEY_PASSWORD,
                 Property.NodeScope,
                 Property.Filtered
             )
@@ -2040,8 +2033,7 @@ public final class OpenSearchSecurityPlugin extends OpenSearchSecuritySSLPlugin
         );
         settings.add(
             Setting.simpleString(
-                ConfigConstants.SECURITY_AUDIT_CONFIG_DEFAULT_PREFIX
-                    + ConfigConstants.SECURITY_AUDIT_EXTERNAL_OPENSEARCH_JKS_CERT_ALIAS,
+                ConfigConstants.SECURITY_AUDIT_CONFIG_DEFAULT_PREFIX + ConfigConstants.SECURITY_AUDIT_EXTERNAL_OPENSEARCH_JKS_CERT_ALIAS,
                 Property.NodeScope,
                 Property.Filtered
             )

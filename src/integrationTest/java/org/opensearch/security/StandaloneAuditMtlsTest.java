@@ -35,9 +35,12 @@ public class StandaloneAuditMtlsTest {
         .loadConfigurationIntoIndex(false)
         .nodeSettings(
             Map.of(
-                ConfigConstants.SECURITY_SSL_ONLY, true,
-                "plugins.security.audit.type", TestRuleAuditLogSink.class.getName(),
-                "plugins.security.ssl.http.clientauth_mode", "OPTIONAL"
+                ConfigConstants.SECURITY_SSL_ONLY,
+                true,
+                "plugins.security.audit.type",
+                TestRuleAuditLogSink.class.getName(),
+                "plugins.security.ssl.http.clientauth_mode",
+                "OPTIONAL"
             )
         )
         .sslOnly(true)

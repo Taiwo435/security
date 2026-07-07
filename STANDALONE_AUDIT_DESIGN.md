@@ -55,7 +55,7 @@ The prototype commit (`4fa7be5d`) proves the concept with ~30 lines of productio
 
 **Purpose**: Captures all REST/transport actions without implying authentication or authorization occurred.
 
-**Why not reuse existing categories**: 
+**Why not reuse existing categories**:
 - `GRANTED_PRIVILEGES` implies a privilege check happened
 - `AUTHENTICATED` implies auth happened
 - In non-FGAC modes, no decisions are made — requests just execute

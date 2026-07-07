@@ -18,7 +18,6 @@ import java.util.concurrent.atomic.AtomicReference;
 
 import org.apache.hc.core5.http.ClassicHttpRequest;
 import org.apache.hc.core5.http.ClassicHttpResponse;
-import org.apache.hc.core5.http.HttpException;
 import org.apache.hc.core5.http.impl.bootstrap.HttpServer;
 import org.apache.hc.core5.http.impl.bootstrap.ServerBootstrap;
 import org.apache.hc.core5.http.io.entity.EntityUtils;
@@ -34,7 +33,6 @@ import org.opensearch.test.framework.cluster.ClusterManager;
 import org.opensearch.test.framework.cluster.LocalCluster;
 import org.opensearch.test.framework.cluster.TestRestClient;
 
-import static org.hamcrest.MatcherAssert.assertThat;
 import static org.hamcrest.Matchers.containsString;
 
 /**
@@ -84,12 +82,7 @@ public class StandaloneAuditSinksTest {
     public static LocalCluster internalSinkCluster = new LocalCluster.Builder().clusterManager(ClusterManager.SINGLENODE)
         .anonymousAuth(false)
         .loadConfigurationIntoIndex(false)
-        .nodeSettings(
-            Map.of(
-                ConfigConstants.SECURITY_SSL_ONLY, true,
-                "plugins.security.audit.type", "internal_opensearch"
-            )
-        )
+        .nodeSettings(Map.of(ConfigConstants.SECURITY_SSL_ONLY, true, "plugins.security.audit.type", "internal_opensearch"))
         .sslOnly(true)
         .build();
 
@@ -101,10 +94,14 @@ public class StandaloneAuditSinksTest {
         .loadConfigurationIntoIndex(false)
         .nodeSettings(
             Map.of(
-                ConfigConstants.SECURITY_SSL_ONLY, true,
-                "plugins.security.audit.type", "log4j",
-                "plugins.security.audit.config.log4j.logger_name", "audit_standalone_test",
-                "plugins.security.audit.config.log4j.level", "INFO"
+                ConfigConstants.SECURITY_SSL_ONLY,
+                true,
+                "plugins.security.audit.type",
+                "log4j",
+                "plugins.security.audit.config.log4j.logger_name",
+                "audit_standalone_test",
+                "plugins.security.audit.config.log4j.level",
+                "INFO"
             )
         )
         .sslOnly(true)

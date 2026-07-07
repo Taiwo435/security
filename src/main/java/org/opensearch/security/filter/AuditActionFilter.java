@@ -20,11 +20,11 @@ import org.opensearch.action.bulk.BulkItemRequest;
 import org.opensearch.action.bulk.BulkShardRequest;
 import org.opensearch.action.index.IndexRequest;
 import org.opensearch.action.search.SearchRequest;
-import org.opensearch.action.support.IndicesOptions;
-import org.opensearch.action.update.UpdateRequest;
 import org.opensearch.action.support.ActionFilter;
 import org.opensearch.action.support.ActionFilterChain;
 import org.opensearch.action.support.ActionRequestMetadata;
+import org.opensearch.action.support.IndicesOptions;
+import org.opensearch.action.update.UpdateRequest;
 import org.opensearch.cluster.metadata.IndexNameExpressionResolver;
 import org.opensearch.cluster.service.ClusterService;
 import org.opensearch.common.collect.Tuple;
@@ -75,15 +75,18 @@ public class AuditActionFilter implements ActionFilter {
         this.threadPool = threadPool;
         this.resolver = new IndexNameExpressionResolver(threadPool.getThreadContext());
         this.logRequestBody = settings.getAsBoolean(ConfigConstants.OPENDISTRO_SECURITY_AUDIT_LOG_REQUEST_BODY, true);
-        this.excludeSensitiveHeaders = settings.getAsBoolean(
-            ConfigConstants.OPENDISTRO_SECURITY_AUDIT_EXCLUDE_SENSITIVE_HEADERS,
-            true
-        );
+        this.excludeSensitiveHeaders = settings.getAsBoolean(ConfigConstants.OPENDISTRO_SECURITY_AUDIT_EXCLUDE_SENSITIVE_HEADERS, true);
         this.resolveIndices = settings.getAsBoolean(ConfigConstants.OPENDISTRO_SECURITY_AUDIT_RESOLVE_INDICES, true);
         this.resolveBulkRequests = settings.getAsBoolean(ConfigConstants.OPENDISTRO_SECURITY_AUDIT_RESOLVE_BULK_REQUESTS, false);
-        List<String> ignoreUsers = settings.getAsList(ConfigConstants.OPENDISTRO_SECURITY_AUDIT_IGNORE_USERS, Collections.singletonList("kibanaserver"));
+        List<String> ignoreUsers = settings.getAsList(
+            ConfigConstants.OPENDISTRO_SECURITY_AUDIT_IGNORE_USERS,
+            Collections.singletonList("kibanaserver")
+        );
         this.ignoreUsersMatcher = WildcardMatcher.from(ignoreUsers);
-        List<String> ignoreRequests = settings.getAsList(ConfigConstants.OPENDISTRO_SECURITY_AUDIT_IGNORE_REQUESTS, Collections.emptyList());
+        List<String> ignoreRequests = settings.getAsList(
+            ConfigConstants.OPENDISTRO_SECURITY_AUDIT_IGNORE_REQUESTS,
+            Collections.emptyList()
+        );
         this.ignoreRequestsMatcher = WildcardMatcher.from(ignoreRequests);
     }
 
@@ -130,8 +133,7 @@ public class AuditActionFilter implements ActionFilter {
                 remoteAddress = threadPool.getThreadContext().getTransient(ConfigConstants.OPENDISTRO_SECURITY_REMOTE_ADDRESS);
             }
 
-            Map<String, List<String>> headers = threadPool.getThreadContext()
-                .getTransient(ConfigConstants.SECURITY_AUDIT_REST_HEADERS);
+            Map<String, List<String>> headers = threadPool.getThreadContext().getTransient(ConfigConstants.SECURITY_AUDIT_REST_HEADERS);
             Map<String, List<String>> filteredHeaders = null;
             if (headers != null && !headers.isEmpty()) {
                 filteredHeaders = new HashMap<>(headers);
@@ -147,7 +149,7 @@ public class AuditActionFilter implements ActionFilter {
                 msg.addRemoteAddress(remoteAddress);
                 msg.addPrivilege(action);
                 msg.addRequestType(innerRequest.getClass().getSimpleName());
-                msg.addIndices(new String[]{innerRequest.index()});
+                msg.addIndices(new String[] { innerRequest.index() });
                 msg.addId(innerRequest.id());
                 msg.addShardId(bulkRequest.shardId());
 
@@ -197,11 +199,7 @@ public class AuditActionFilter implements ActionFilter {
             // Resolve wildcards to actual index names
             if (resolveIndices && indices != null && indices.length > 0) {
                 try {
-                    String[] resolved = resolver.concreteIndexNames(
-                        clusterService.state(),
-                        IndicesOptions.lenientExpandOpen(),
-                        indices
-                    );
+                    String[] resolved = resolver.concreteIndexNames(clusterService.state(), IndicesOptions.lenientExpandOpen(), indices);
                     msg.addResolvedIndices(resolved);
                 } catch (Exception e) {
                     // Index resolution can fail if cluster state isn't ready — log raw indices only
@@ -228,8 +226,7 @@ public class AuditActionFilter implements ActionFilter {
         }
 
         // REST headers (stashed by REST wrapper, filtered here)
-        Map<String, List<String>> headers = threadPool.getThreadContext()
-            .getTransient(ConfigConstants.SECURITY_AUDIT_REST_HEADERS);
+        Map<String, List<String>> headers = threadPool.getThreadContext().getTransient(ConfigConstants.SECURITY_AUDIT_REST_HEADERS);
         if (headers != null && !headers.isEmpty()) {
             Map<String, List<String>> filteredHeaders = new HashMap<>(headers);
             if (excludeSensitiveHeaders) {

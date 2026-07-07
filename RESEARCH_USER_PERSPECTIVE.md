@@ -115,5 +115,3 @@ Do we wanna log REST-specific metadata (HTTP method,path, headers) ?
   4. If my standalone audit work lands in open-source, what would need to happen for the managed service to adopt it? Are there blockers or extra requirements?
   5. From your experience with managed service customers — when something goes wrong (data deleted, unauthorized access), what information do they wish they had in the audit trail that isn't there today?
   6. Does the managed service ever override or filter audit categories on behalf of customers, or do customers get exactly what the open-source plugin emits?
-
-  

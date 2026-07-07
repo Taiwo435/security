@@ -44,10 +44,14 @@ public class StandaloneAuditWebhookSinkTest {
         .loadConfigurationIntoIndex(false)
         .nodeSettings(
             Map.of(
-                ConfigConstants.SECURITY_SSL_ONLY, true,
-                "plugins.security.audit.type", TestRuleAuditLogSink.class.getName(),
-                "plugins.security.audit.config.webhook.url", "http://localhost:19876/audit",
-                "plugins.security.audit.config.webhook.format", "JSON"
+                ConfigConstants.SECURITY_SSL_ONLY,
+                true,
+                "plugins.security.audit.type",
+                TestRuleAuditLogSink.class.getName(),
+                "plugins.security.audit.config.webhook.url",
+                "http://localhost:19876/audit",
+                "plugins.security.audit.config.webhook.format",
+                "JSON"
             )
         )
         .sslOnly(true)
@@ -64,8 +68,9 @@ public class StandaloneAuditWebhookSinkTest {
 
         // Events are produced and captured by TestRuleAuditLogSink
         // (In production, these would go to the webhook URL)
-        auditLogsRule.assertAtLeast(1, (AuditMessage msg) ->
-            msg.getCategory() == AuditCategory.REQUEST_AUDIT
+        auditLogsRule.assertAtLeast(
+            1,
+            (AuditMessage msg) -> msg.getCategory() == AuditCategory.REQUEST_AUDIT
                 && msg.getPrivilege() != null
                 && msg.getPrivilege().contains("cluster:monitor/health")
         );

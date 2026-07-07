@@ -34,12 +34,7 @@ public class StandaloneAuditLoggingTest {
     public static LocalCluster cluster = new LocalCluster.Builder().clusterManager(ClusterManager.SINGLENODE)
         .anonymousAuth(false)
         .loadConfigurationIntoIndex(false)
-        .nodeSettings(
-            Map.of(
-                ConfigConstants.SECURITY_SSL_ONLY, true,
-                "plugins.security.audit.type", TestRuleAuditLogSink.class.getName()
-            )
-        )
+        .nodeSettings(Map.of(ConfigConstants.SECURITY_SSL_ONLY, true, "plugins.security.audit.type", TestRuleAuditLogSink.class.getName()))
         .sslOnly(true)
         .build();
 
@@ -87,8 +82,9 @@ public class StandaloneAuditLoggingTest {
             client.putJson("test-index/_doc/1", "{\"field\": \"value\"}");
         }
 
-        auditLogsRule.assertAtLeast(1, (AuditMessage msg) ->
-            msg.getCategory() == AuditCategory.REQUEST_AUDIT
+        auditLogsRule.assertAtLeast(
+            1,
+            (AuditMessage msg) -> msg.getCategory() == AuditCategory.REQUEST_AUDIT
                 && msg.getPrivilege() != null
                 && msg.getPrivilege().contains("indices:data/write")
         );
@@ -123,8 +119,9 @@ public class StandaloneAuditLoggingTest {
             client.get("_cat/indices");
         }
 
-        auditLogsRule.assertExactlyScanAll(0, (AuditMessage msg) ->
-            msg.getCategory() == AuditCategory.AUTHENTICATED
+        auditLogsRule.assertExactlyScanAll(
+            0,
+            (AuditMessage msg) -> msg.getCategory() == AuditCategory.AUTHENTICATED
                 || msg.getCategory() == AuditCategory.GRANTED_PRIVILEGES
                 || msg.getCategory() == AuditCategory.FAILED_LOGIN
         );
@@ -180,8 +177,9 @@ public class StandaloneAuditLoggingTest {
             client.delete("del-test/_doc/1");
         }
 
-        auditLogsRule.assertAtLeast(1, (AuditMessage msg) ->
-            msg.getCategory() == AuditCategory.REQUEST_AUDIT
+        auditLogsRule.assertAtLeast(
+            1,
+            (AuditMessage msg) -> msg.getCategory() == AuditCategory.REQUEST_AUDIT
                 && msg.getPrivilege() != null
                 && msg.getPrivilege().contains("indices:data/write/delete")
         );
@@ -194,8 +192,9 @@ public class StandaloneAuditLoggingTest {
             client.delete("to-delete");
         }
 
-        auditLogsRule.assertAtLeast(1, (AuditMessage msg) ->
-            msg.getCategory() == AuditCategory.REQUEST_AUDIT
+        auditLogsRule.assertAtLeast(
+            1,
+            (AuditMessage msg) -> msg.getCategory() == AuditCategory.REQUEST_AUDIT
                 && msg.getPrivilege() != null
                 && msg.getPrivilege().contains("indices:admin/delete")
         );
@@ -208,8 +207,9 @@ public class StandaloneAuditLoggingTest {
             client.postJson("_mget", mgetBody);
         }
 
-        auditLogsRule.assertAtLeast(1, (AuditMessage msg) ->
-            msg.getCategory() == AuditCategory.REQUEST_AUDIT
+        auditLogsRule.assertAtLeast(
+            1,
+            (AuditMessage msg) -> msg.getCategory() == AuditCategory.REQUEST_AUDIT
                 && msg.getPrivilege() != null
                 && msg.getPrivilege().contains("indices:data/read/mget")
         );
@@ -222,8 +222,9 @@ public class StandaloneAuditLoggingTest {
             client.postJson("_msearch", msearchBody);
         }
 
-        auditLogsRule.assertAtLeast(1, (AuditMessage msg) ->
-            msg.getCategory() == AuditCategory.REQUEST_AUDIT
+        auditLogsRule.assertAtLeast(
+            1,
+            (AuditMessage msg) -> msg.getCategory() == AuditCategory.REQUEST_AUDIT
                 && msg.getPrivilege() != null
                 && msg.getPrivilege().contains("indices:data/read/msearch")
         );
@@ -236,8 +237,9 @@ public class StandaloneAuditLoggingTest {
             client.postJson("update-test/_update/1", "{\"doc\": {\"field\": \"updated\"}}");
         }
 
-        auditLogsRule.assertAtLeast(1, (AuditMessage msg) ->
-            msg.getCategory() == AuditCategory.REQUEST_AUDIT
+        auditLogsRule.assertAtLeast(
+            1,
+            (AuditMessage msg) -> msg.getCategory() == AuditCategory.REQUEST_AUDIT
                 && msg.getPrivilege() != null
                 && msg.getPrivilege().contains("indices:data/write/update")
         );
@@ -249,8 +251,9 @@ public class StandaloneAuditLoggingTest {
             client.putJson("new-index-test", "{\"settings\": {\"number_of_shards\": 1}}");
         }
 
-        auditLogsRule.assertAtLeast(1, (AuditMessage msg) ->
-            msg.getCategory() == AuditCategory.REQUEST_AUDIT
+        auditLogsRule.assertAtLeast(
+            1,
+            (AuditMessage msg) -> msg.getCategory() == AuditCategory.REQUEST_AUDIT
                 && msg.getPrivilege() != null
                 && msg.getPrivilege().contains("indices:admin/create")
         );
@@ -263,9 +266,9 @@ public class StandaloneAuditLoggingTest {
         }
 
         // GET _cluster/settings dispatches as a ClusterStateRequest internally
-        auditLogsRule.assertAtLeast(1, (AuditMessage msg) ->
-            msg.getCategory() == AuditCategory.REQUEST_AUDIT
-                && "ClusterStateRequest".equals(msg.getRequestType())
+        auditLogsRule.assertAtLeast(
+            1,
+            (AuditMessage msg) -> msg.getCategory() == AuditCategory.REQUEST_AUDIT && "ClusterStateRequest".equals(msg.getRequestType())
         );
     }
 
@@ -275,8 +278,9 @@ public class StandaloneAuditLoggingTest {
             client.get("_nodes");
         }
 
-        auditLogsRule.assertAtLeast(1, (AuditMessage msg) ->
-            msg.getCategory() == AuditCategory.REQUEST_AUDIT
+        auditLogsRule.assertAtLeast(
+            1,
+            (AuditMessage msg) -> msg.getCategory() == AuditCategory.REQUEST_AUDIT
                 && msg.getPrivilege() != null
                 && msg.getPrivilege().contains("cluster:monitor/nodes/info")
         );
@@ -289,8 +293,9 @@ public class StandaloneAuditLoggingTest {
             client.get("get-test/_doc/1");
         }
 
-        auditLogsRule.assertAtLeast(1, (AuditMessage msg) ->
-            msg.getCategory() == AuditCategory.REQUEST_AUDIT
+        auditLogsRule.assertAtLeast(
+            1,
+            (AuditMessage msg) -> msg.getCategory() == AuditCategory.REQUEST_AUDIT
                 && msg.getPrivilege() != null
                 && msg.getPrivilege().contains("indices:data/read/get")
         );
@@ -303,8 +308,9 @@ public class StandaloneAuditLoggingTest {
         }
 
         // HEAD on an index triggers an indices:admin action (exists or resolve)
-        auditLogsRule.assertAtLeast(1, (AuditMessage msg) ->
-            msg.getCategory() == AuditCategory.REQUEST_AUDIT
+        auditLogsRule.assertAtLeast(
+            1,
+            (AuditMessage msg) -> msg.getCategory() == AuditCategory.REQUEST_AUDIT
                 && msg.getPrivilege() != null
                 && msg.getPrivilege().contains("indices:admin")
         );
@@ -318,8 +324,9 @@ public class StandaloneAuditLoggingTest {
             client.get("does-not-exist/_doc/999");
         }
 
-        auditLogsRule.assertAtLeast(1, (AuditMessage msg) ->
-            msg.getCategory() == AuditCategory.REQUEST_AUDIT
+        auditLogsRule.assertAtLeast(
+            1,
+            (AuditMessage msg) -> msg.getCategory() == AuditCategory.REQUEST_AUDIT
                 && msg.getPrivilege() != null
                 && msg.getPrivilege().contains("indices:data/read/get")
         );
@@ -334,8 +341,9 @@ public class StandaloneAuditLoggingTest {
         }
 
         // Should produce at least 20 audit events
-        auditLogsRule.assertAtLeast(20, (AuditMessage msg) ->
-            msg.getCategory() == AuditCategory.REQUEST_AUDIT
+        auditLogsRule.assertAtLeast(
+            20,
+            (AuditMessage msg) -> msg.getCategory() == AuditCategory.REQUEST_AUDIT
                 && msg.getPrivilege() != null
                 && msg.getPrivilege().contains("cluster:monitor/health")
         );
@@ -348,8 +356,9 @@ public class StandaloneAuditLoggingTest {
             client.postJson("_aliases", "{\"actions\": [{\"add\": {\"index\": \"alias-source\", \"alias\": \"my-alias\"}}]}");
         }
 
-        auditLogsRule.assertAtLeast(1, (AuditMessage msg) ->
-            msg.getCategory() == AuditCategory.REQUEST_AUDIT
+        auditLogsRule.assertAtLeast(
+            1,
+            (AuditMessage msg) -> msg.getCategory() == AuditCategory.REQUEST_AUDIT
                 && msg.getPrivilege() != null
                 && msg.getPrivilege().contains("indices:admin/aliases")
         );
@@ -361,8 +370,9 @@ public class StandaloneAuditLoggingTest {
             client.get("test-index/_count");
         }
 
-        auditLogsRule.assertAtLeast(1, (AuditMessage msg) ->
-            msg.getCategory() == AuditCategory.REQUEST_AUDIT
+        auditLogsRule.assertAtLeast(
+            1,
+            (AuditMessage msg) -> msg.getCategory() == AuditCategory.REQUEST_AUDIT
                 && msg.getPrivilege() != null
                 && msg.getPrivilege().contains("indices:data/read/search")
         );
@@ -376,8 +386,9 @@ public class StandaloneAuditLoggingTest {
             client.patch("patch-test/_doc/1", "{\"doc\": {\"field\": \"patched\"}}");
         }
 
-        auditLogsRule.assertAtLeast(1, (AuditMessage msg) ->
-            msg.getCategory() == AuditCategory.REQUEST_AUDIT
+        auditLogsRule.assertAtLeast(
+            1,
+            (AuditMessage msg) -> msg.getCategory() == AuditCategory.REQUEST_AUDIT
                 && msg.getPrivilege() != null
                 && msg.getPrivilege().contains("indices:data/write")
         );

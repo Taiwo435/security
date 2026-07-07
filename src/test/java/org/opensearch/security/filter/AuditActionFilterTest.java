@@ -144,10 +144,8 @@ public class AuditActionFilterTest {
     @Test
     public void testApplyIncludesSslPrincipalAsEffectiveUser() throws Exception {
         // Simulate REST wrapper having stored the SSL principal in ThreadContext
-        threadPool.getThreadContext().putTransient(
-            org.opensearch.security.support.ConfigConstants.OPENDISTRO_SECURITY_SSL_PRINCIPAL,
-            "CN=admin,OU=client,O=org"
-        );
+        threadPool.getThreadContext()
+            .putTransient(org.opensearch.security.support.ConfigConstants.OPENDISTRO_SECURITY_SSL_PRINCIPAL, "CN=admin,OU=client,O=org");
 
         ClusterHealthRequest request = new ClusterHealthRequest();
         ActionFilterChain<ClusterHealthRequest, ActionResponse> chain = mock(ActionFilterChain.class);

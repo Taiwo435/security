@@ -36,9 +36,12 @@ public class StandaloneAuditDisabledCategoryTest {
         .loadConfigurationIntoIndex(false)
         .nodeSettings(
             Map.of(
-                ConfigConstants.SECURITY_SSL_ONLY, true,
-                "plugins.security.audit.type", TestRuleAuditLogSink.class.getName(),
-                ConfigConstants.OPENDISTRO_SECURITY_AUDIT_CONFIG_DISABLED_CATEGORIES, List.of("REQUEST_AUDIT")
+                ConfigConstants.SECURITY_SSL_ONLY,
+                true,
+                "plugins.security.audit.type",
+                TestRuleAuditLogSink.class.getName(),
+                ConfigConstants.OPENDISTRO_SECURITY_AUDIT_CONFIG_DISABLED_CATEGORIES,
+                List.of("REQUEST_AUDIT")
             )
         )
         .sslOnly(true)
@@ -56,8 +59,6 @@ public class StandaloneAuditDisabledCategoryTest {
 
         // Wait then assert no REQUEST_AUDIT events were produced
         auditLogsRule.waitForAuditLogs();
-        auditLogsRule.assertExactlyScanAll(0, (AuditMessage msg) ->
-            msg.getCategory() == AuditCategory.REQUEST_AUDIT
-        );
+        auditLogsRule.assertExactlyScanAll(0, (AuditMessage msg) -> msg.getCategory() == AuditCategory.REQUEST_AUDIT);
     }
 }
