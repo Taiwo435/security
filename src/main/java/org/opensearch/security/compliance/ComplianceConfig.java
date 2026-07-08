@@ -55,6 +55,7 @@ import org.opensearch.core.common.Strings;
 import org.opensearch.security.DefaultObjectMapper;
 import org.opensearch.security.auditlog.config.AuditConfig;
 import org.opensearch.security.support.ConfigConstants;
+import org.opensearch.security.support.SecuritySettings;
 import org.opensearch.security.support.WildcardMatcher;
 
 import org.joda.time.DateTime;
@@ -82,20 +83,20 @@ public class ComplianceConfig {
 
     private final boolean logExternalConfig;
     private final boolean logInternalConfig;
-    private final boolean logReadMetadataOnly;
-    private final boolean logWriteMetadataOnly;
+    private volatile boolean logReadMetadataOnly;
+    private volatile boolean logWriteMetadataOnly;
     @JsonProperty("write_log_diffs")
-    private final boolean logDiffsForWrite;
+    private volatile boolean logDiffsForWrite;
     @JsonProperty("read_watched_fields")
     private final Map<String, List<String>> watchedReadFields;
     @JsonProperty("read_ignore_users")
     private final Set<String> ignoredComplianceUsersForRead;
     @JsonProperty("write_watched_indices")
-    private final List<String> watchedWriteIndicesPatterns;
+    private volatile List<String> watchedWriteIndicesPatterns;
     @JsonProperty("write_ignore_users")
     private final Set<String> ignoredComplianceUsersForWrite;
 
-    private final WildcardMatcher watchedWriteIndicesMatcher;
+    private volatile WildcardMatcher watchedWriteIndicesMatcher;
     private final WildcardMatcher ignoredComplianceUsersForReadMatcher;
     private final WildcardMatcher ignoredComplianceUsersForWriteMatcher;
     private final String securityIndex;
@@ -104,7 +105,7 @@ public class ComplianceConfig {
     private final LoadingCache<String, WildcardMatcher> readEnabledFieldsCache;
     private final DateTimeFormatter auditLogPattern;
     private final String auditLogIndex;
-    private final boolean enabled;
+    private volatile boolean enabled;
     private final Supplier<DateTime> dateProvider;
     private final WildcardMatcher securityIndicesMatcher;
 
@@ -340,8 +341,10 @@ public class ComplianceConfig {
             false
         );
 
+        final boolean enabled = SecuritySettings.COMPLIANCE_ENABLED.get(settings);
+
         return new ComplianceConfig(
-            true,
+            enabled,
             logExternalConfig,
             logInternalConfig,
             logReadMetadataOnly,
@@ -381,6 +384,27 @@ public class ComplianceConfig {
     @JsonProperty
     public boolean isEnabled() {
         return this.enabled;
+    }
+
+    public void setEnabled(boolean enabled) {
+        this.enabled = enabled;
+    }
+
+    public void setWriteMetadataOnly(boolean writeMetadataOnly) {
+        this.logWriteMetadataOnly = writeMetadataOnly;
+    }
+
+    public void setReadMetadataOnly(boolean readMetadataOnly) {
+        this.logReadMetadataOnly = readMetadataOnly;
+    }
+
+    public void setLogDiffsForWrite(boolean logDiffs) {
+        this.logDiffsForWrite = logDiffs;
+    }
+
+    public void setWatchedWriteIndices(List<String> indices) {
+        this.watchedWriteIndicesPatterns = indices;
+        this.watchedWriteIndicesMatcher = WildcardMatcher.from(indices);
     }
 
     /**

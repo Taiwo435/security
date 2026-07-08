@@ -437,6 +437,26 @@ public final class OpenSearchSecurityPlugin extends OpenSearchSecuritySSLPlugin
                 log.info("Audit ignore_requests dynamically updated");
                 auditLogImpl.getFilter().setIgnoredAuditRequests(newValue);
             });
+            clusterService.getClusterSettings().addSettingsUpdateConsumer(SecuritySettings.COMPLIANCE_ENABLED, newValue -> {
+                log.info("Compliance tracking dynamically {} via cluster setting", newValue ? "enabled" : "disabled");
+                auditLogImpl.getComplianceConfig().setEnabled(newValue);
+            });
+            clusterService.getClusterSettings().addSettingsUpdateConsumer(SecuritySettings.COMPLIANCE_WRITE_METADATA_ONLY, newValue -> {
+                log.info("Compliance write_metadata_only dynamically set to {}", newValue);
+                auditLogImpl.getComplianceConfig().setWriteMetadataOnly(newValue);
+            });
+            clusterService.getClusterSettings().addSettingsUpdateConsumer(SecuritySettings.COMPLIANCE_READ_METADATA_ONLY, newValue -> {
+                log.info("Compliance read_metadata_only dynamically set to {}", newValue);
+                auditLogImpl.getComplianceConfig().setReadMetadataOnly(newValue);
+            });
+            clusterService.getClusterSettings().addSettingsUpdateConsumer(SecuritySettings.COMPLIANCE_WRITE_LOG_DIFFS, newValue -> {
+                log.info("Compliance write_log_diffs dynamically set to {}", newValue);
+                auditLogImpl.getComplianceConfig().setLogDiffsForWrite(newValue);
+            });
+            clusterService.getClusterSettings().addSettingsUpdateConsumer(SecuritySettings.COMPLIANCE_WRITE_WATCHED_INDICES, newValue -> {
+                log.info("Compliance write_watched_indices dynamically updated");
+                auditLogImpl.getComplianceConfig().setWatchedWriteIndices(newValue);
+            });
         } else {
             auditLog = new NullAuditLog();
         }
@@ -1116,6 +1136,10 @@ public final class OpenSearchSecurityPlugin extends OpenSearchSecuritySSLPlugin
             }.toListener());
 
             indexModule.addIndexEventListener(cr);
+        } else if (!disabled && !client && auditLog != null && !(auditLog instanceof NullAuditLog)) {
+            // Non-FGAC mode: register compliance listener for standalone audit
+            final ComplianceIndexingOperationListener ciol = new ComplianceIndexingOperationListenerImpl(auditLog, threadPool);
+            indexModule.addIndexOperationListener(ciol);
         }
     }
 
@@ -2153,6 +2177,100 @@ public final class OpenSearchSecurityPlugin extends OpenSearchSecuritySSLPlugin
             )
         );
 
+        // Compliance (registered outside sslOnlyMode gate for standalone compliance tracking)
+        // New prefix (plugins.security.audit.compliance.*) — dynamic
+        settings.add(SecuritySettings.COMPLIANCE_ENABLED);
+        settings.add(SecuritySettings.COMPLIANCE_WRITE_WATCHED_INDICES);
+        settings.add(SecuritySettings.COMPLIANCE_WRITE_METADATA_ONLY);
+        settings.add(SecuritySettings.COMPLIANCE_WRITE_LOG_DIFFS);
+        settings.add(SecuritySettings.COMPLIANCE_EXTERNAL_CONFIG_ENABLED);
+        settings.add(SecuritySettings.COMPLIANCE_INTERNAL_CONFIG_ENABLED);
+        settings.add(SecuritySettings.COMPLIANCE_READ_METADATA_ONLY);
+        settings.add(SecuritySettings.COMPLIANCE_READ_WATCHED_FIELDS);
+        settings.add(SecuritySettings.COMPLIANCE_READ_IGNORE_USERS);
+        settings.add(SecuritySettings.COMPLIANCE_WRITE_IGNORE_USERS);
+        // Legacy prefix (opendistro_security.compliance.*) — kept for backwards compatibility
+        settings.add(
+            Setting.listSetting(
+                ConfigConstants.OPENDISTRO_SECURITY_COMPLIANCE_HISTORY_WRITE_WATCHED_INDICES,
+                Collections.emptyList(),
+                Function.identity(),
+                Property.NodeScope
+            )
+        );
+        settings.add(
+            Setting.listSetting(
+                ConfigConstants.OPENDISTRO_SECURITY_COMPLIANCE_HISTORY_READ_WATCHED_FIELDS,
+                Collections.emptyList(),
+                Function.identity(),
+                Property.NodeScope
+            )
+        );
+        settings.add(
+            Setting.boolSetting(
+                ConfigConstants.OPENDISTRO_SECURITY_COMPLIANCE_HISTORY_WRITE_METADATA_ONLY,
+                false,
+                Property.NodeScope,
+                Property.Filtered
+            )
+        );
+        settings.add(
+            Setting.boolSetting(
+                ConfigConstants.OPENDISTRO_SECURITY_COMPLIANCE_HISTORY_READ_METADATA_ONLY,
+                false,
+                Property.NodeScope,
+                Property.Filtered
+            )
+        );
+        settings.add(
+            Setting.boolSetting(
+                ConfigConstants.OPENDISTRO_SECURITY_COMPLIANCE_HISTORY_WRITE_LOG_DIFFS,
+                false,
+                Property.NodeScope,
+                Property.Filtered
+            )
+        );
+        settings.add(
+            Setting.boolSetting(
+                ConfigConstants.OPENDISTRO_SECURITY_COMPLIANCE_HISTORY_EXTERNAL_CONFIG_ENABLED,
+                false,
+                Property.NodeScope,
+                Property.Filtered
+            )
+        );
+        settings.add(
+            Setting.listSetting(
+                ConfigConstants.OPENDISTRO_SECURITY_COMPLIANCE_HISTORY_READ_IGNORE_USERS,
+                Collections.emptyList(),
+                Function.identity(),
+                Property.NodeScope
+            )
+        );
+        settings.add(
+            Setting.listSetting(
+                ConfigConstants.OPENDISTRO_SECURITY_COMPLIANCE_HISTORY_WRITE_IGNORE_USERS,
+                Collections.emptyList(),
+                Function.identity(),
+                Property.NodeScope
+            )
+        );
+        settings.add(
+            Setting.boolSetting(
+                ConfigConstants.SECURITY_COMPLIANCE_DISABLE_ANONYMOUS_AUTHENTICATION,
+                false,
+                Property.NodeScope,
+                Property.Filtered
+            )
+        );
+        settings.add(
+            Setting.listSetting(
+                ConfigConstants.SECURITY_COMPLIANCE_IMMUTABLE_INDICES,
+                Collections.emptyList(),
+                Function.identity(),
+                Property.NodeScope
+            )
+        );
+
         if (!SSLConfig.isSslOnlyMode()) {
             settings.add(
                 Setting.listSetting(
@@ -2279,87 +2397,8 @@ public final class OpenSearchSecurityPlugin extends OpenSearchSecuritySSLPlugin
                 )
             );
 
-            // Compliance
-            settings.add(
-                Setting.listSetting(
-                    ConfigConstants.OPENDISTRO_SECURITY_COMPLIANCE_HISTORY_WRITE_WATCHED_INDICES,
-                    Collections.emptyList(),
-                    Function.identity(),
-                    Property.NodeScope
-                )
-            ); // not filtered here
-            settings.add(
-                Setting.listSetting(
-                    ConfigConstants.OPENDISTRO_SECURITY_COMPLIANCE_HISTORY_READ_WATCHED_FIELDS,
-                    Collections.emptyList(),
-                    Function.identity(),
-                    Property.NodeScope
-                )
-            ); // not filtered here
-            settings.add(
-                Setting.boolSetting(
-                    ConfigConstants.OPENDISTRO_SECURITY_COMPLIANCE_HISTORY_WRITE_METADATA_ONLY,
-                    false,
-                    Property.NodeScope,
-                    Property.Filtered
-                )
-            );
-            settings.add(
-                Setting.boolSetting(
-                    ConfigConstants.OPENDISTRO_SECURITY_COMPLIANCE_HISTORY_READ_METADATA_ONLY,
-                    false,
-                    Property.NodeScope,
-                    Property.Filtered
-                )
-            );
-            settings.add(
-                Setting.boolSetting(
-                    ConfigConstants.OPENDISTRO_SECURITY_COMPLIANCE_HISTORY_WRITE_LOG_DIFFS,
-                    false,
-                    Property.NodeScope,
-                    Property.Filtered
-                )
-            );
-            settings.add(
-                Setting.boolSetting(
-                    ConfigConstants.OPENDISTRO_SECURITY_COMPLIANCE_HISTORY_EXTERNAL_CONFIG_ENABLED,
-                    false,
-                    Property.NodeScope,
-                    Property.Filtered
-                )
-            );
-            settings.add(
-                Setting.listSetting(
-                    ConfigConstants.OPENDISTRO_SECURITY_COMPLIANCE_HISTORY_READ_IGNORE_USERS,
-                    Collections.emptyList(),
-                    Function.identity(),
-                    Property.NodeScope
-                )
-            ); // not filtered here
-            settings.add(
-                Setting.listSetting(
-                    ConfigConstants.OPENDISTRO_SECURITY_COMPLIANCE_HISTORY_WRITE_IGNORE_USERS,
-                    Collections.emptyList(),
-                    Function.identity(),
-                    Property.NodeScope
-                )
-            ); // not filtered here
-            settings.add(
-                Setting.boolSetting(
-                    ConfigConstants.SECURITY_COMPLIANCE_DISABLE_ANONYMOUS_AUTHENTICATION,
-                    false,
-                    Property.NodeScope,
-                    Property.Filtered
-                )
-            );
-            settings.add(
-                Setting.listSetting(
-                    ConfigConstants.SECURITY_COMPLIANCE_IMMUTABLE_INDICES,
-                    Collections.emptyList(),
-                    Function.identity(),
-                    Property.NodeScope
-                )
-            ); // not filtered here
+            // Compliance settings moved outside the gate — see below
+
             settings.add(Setting.simpleString(ConfigConstants.SECURITY_COMPLIANCE_SALT, Property.NodeScope, Property.Filtered));
             settings.add(
                 Setting.boolSetting(
