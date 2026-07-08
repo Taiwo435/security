@@ -40,7 +40,7 @@ public class StandaloneAuditDisabledCategoryTest {
                 true,
                 "plugins.security.audit.type",
                 TestRuleAuditLogSink.class.getName(),
-                ConfigConstants.OPENDISTRO_SECURITY_AUDIT_CONFIG_DISABLED_CATEGORIES,
+                ConfigConstants.SECURITY_AUDIT_CONFIG_DISABLED_CATEGORIES,
                 List.of("REQUEST_AUDIT")
             )
         )
