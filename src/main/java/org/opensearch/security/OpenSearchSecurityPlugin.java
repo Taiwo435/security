@@ -174,6 +174,7 @@ import org.opensearch.security.dlic.rest.api.ssl.CertificatesActionType;
 import org.opensearch.security.dlic.rest.api.ssl.TransportCertificatesInfoNodesAction;
 import org.opensearch.security.dlic.rest.validation.PasswordValidator;
 import org.opensearch.security.filter.AuditActionFilter;
+import org.opensearch.security.filter.AuditTransportInterceptor;
 import org.opensearch.security.filter.SecurityFilter;
 import org.opensearch.security.filter.SecurityRestFilter;
 import org.opensearch.security.hasher.PasswordHasher;
@@ -1160,6 +1161,11 @@ public final class OpenSearchSecurityPlugin extends OpenSearchSecuritySSLPlugin
     @Override
     public List<TransportInterceptor> getTransportInterceptors(NamedWriteableRegistry namedWriteableRegistry, ThreadContext threadContext) {
         List<TransportInterceptor> interceptors = new ArrayList<TransportInterceptor>(1);
+
+        // Audit transport interceptor — all modes (FGAC, SSL-only, disabled)
+        if (!client && auditLog != null && !(auditLog instanceof NullAuditLog)) {
+            interceptors.add(new AuditTransportInterceptor(auditLog, cs, threadPool, settings));
+        }
 
         if (!client && !disabled && !SSLConfig.isSslOnlyMode()) {
             interceptors.add(new TransportInterceptor() {
