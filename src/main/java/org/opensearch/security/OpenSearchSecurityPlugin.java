@@ -154,11 +154,13 @@ import org.opensearch.security.auditlog.AuditLogSslExceptionHandler;
 import org.opensearch.security.auditlog.NullAuditLog;
 import org.opensearch.security.auditlog.config.AuditConfig;
 import org.opensearch.security.auditlog.config.AuditConfig.Filter.FilterEntries;
+import org.opensearch.security.auditlog.impl.AbstractAuditLog;
 import org.opensearch.security.auditlog.impl.AuditCategory;
 import org.opensearch.security.auditlog.impl.AuditLogImpl;
 import org.opensearch.security.auth.BackendRegistry;
 import org.opensearch.security.auth.RolesInjector;
 import org.opensearch.security.compliance.ComplianceIndexingOperationListener;
+import org.opensearch.security.compliance.ComplianceReadIndexSearcherWrapper;
 import org.opensearch.security.compliance.ComplianceIndexingOperationListenerImpl;
 import org.opensearch.security.configuration.AdminDNs;
 import org.opensearch.security.configuration.ClusterInfoHolder;
@@ -1141,6 +1143,11 @@ public final class OpenSearchSecurityPlugin extends OpenSearchSecuritySSLPlugin
             // Non-FGAC mode: register compliance listener for standalone audit
             final ComplianceIndexingOperationListener ciol = new ComplianceIndexingOperationListenerImpl(auditLog, threadPool);
             indexModule.addIndexOperationListener(ciol);
+
+            // Compliance read tracking — lightweight reader wrapper (no DLS/FLS)
+            indexModule.setReaderWrapper(
+                indexService -> new ComplianceReadIndexSearcherWrapper(indexService, threadPool, cs, auditLog)
+            );
         }
     }
 
@@ -1153,7 +1160,7 @@ public final class OpenSearchSecurityPlugin extends OpenSearchSecuritySSLPlugin
             // !(auditLog instanceof NullAuditLog) prevents registering AuditActionFilter when there's no real sink to send events to. No
             // point intercepting every request just to discard the message.
         } else if (!client && auditLog != null && !(auditLog instanceof NullAuditLog)) {
-            filters.add(new AuditActionFilter(auditLog, cs, threadPool, settings));
+            filters.add(new AuditActionFilter(auditLog, cs, threadPool, ((AbstractAuditLog) auditLog).getFilter()));
         }
         return filters;
     }

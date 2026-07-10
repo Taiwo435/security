@@ -46,3 +46,6 @@ gradle-build/
 docker/certs/
 docker/fgac/
 docker/plugin/
+DESIGN_DECISIONS.md
+JOURNAL.txt
+STANDALONE_AUDIT_DESIGN.md

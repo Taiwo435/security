@@ -29,6 +29,7 @@ import org.opensearch.core.action.ActionListener;
 import org.opensearch.core.action.ActionResponse;
 import org.opensearch.core.common.transport.TransportAddress;
 import org.opensearch.security.auditlog.AuditLog;
+import org.opensearch.security.auditlog.config.AuditConfig;
 import org.opensearch.security.auditlog.impl.AuditCategory;
 import org.opensearch.security.auditlog.impl.AuditMessage;
 import org.opensearch.security.support.ConfigConstants;
@@ -71,7 +72,7 @@ public class AuditActionFilterTest {
         when(clusterService.localNode()).thenReturn(node);
         when(clusterService.getClusterName()).thenReturn(new ClusterName("test-cluster"));
 
-        filter = new AuditActionFilter(auditLog, clusterService, threadPool, org.opensearch.common.settings.Settings.EMPTY);
+        filter = new AuditActionFilter(auditLog, clusterService, threadPool, AuditConfig.Filter.DEFAULT);
     }
 
     @SuppressWarnings("unchecked")
@@ -266,7 +267,7 @@ public class AuditActionFilterTest {
         Settings ignoreSettings = Settings.builder()
             .putList(ConfigConstants.OPENDISTRO_SECURITY_AUDIT_IGNORE_USERS, "ignored_admin")
             .build();
-        AuditActionFilter ignoreFilter = new AuditActionFilter(auditLog, clusterService, threadPool, ignoreSettings);
+        AuditActionFilter ignoreFilter = new AuditActionFilter(auditLog, clusterService, threadPool, AuditConfig.from(ignoreSettings).getFilter());
 
         User ignoredUser = new User("ignored_admin");
         threadPool.getThreadContext().putTransient(ConfigConstants.OPENDISTRO_SECURITY_USER, ignoredUser);
@@ -289,7 +290,7 @@ public class AuditActionFilterTest {
         Settings ignoreSettings = Settings.builder()
             .putList(ConfigConstants.OPENDISTRO_SECURITY_AUDIT_IGNORE_REQUESTS, "indices:data/read/search")
             .build();
-        AuditActionFilter ignoreFilter = new AuditActionFilter(auditLog, clusterService, threadPool, ignoreSettings);
+        AuditActionFilter ignoreFilter = new AuditActionFilter(auditLog, clusterService, threadPool, AuditConfig.from(ignoreSettings).getFilter());
 
         SearchRequest request = new SearchRequest("my-index");
         ActionFilterChain<SearchRequest, ActionResponse> chain = mock(ActionFilterChain.class);
@@ -309,7 +310,7 @@ public class AuditActionFilterTest {
         Settings ignoreSettings = Settings.builder()
             .putList(ConfigConstants.OPENDISTRO_SECURITY_AUDIT_IGNORE_REQUESTS, "SearchRequest")
             .build();
-        AuditActionFilter ignoreFilter = new AuditActionFilter(auditLog, clusterService, threadPool, ignoreSettings);
+        AuditActionFilter ignoreFilter = new AuditActionFilter(auditLog, clusterService, threadPool, AuditConfig.from(ignoreSettings).getFilter());
 
         SearchRequest request = new SearchRequest("my-index");
         ActionFilterChain<SearchRequest, ActionResponse> chain = mock(ActionFilterChain.class);
