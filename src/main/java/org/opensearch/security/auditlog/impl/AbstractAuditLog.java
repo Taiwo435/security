@@ -343,7 +343,9 @@ public abstract class AbstractAuditLog implements AuditLog {
 
     @Override
     public void logRequestAudit(AuditMessage msg) {
-        if (auditConfigFilter != null && auditConfigFilter.getDisabledTransportCategories().contains(msg.getCategory())) {
+        if (auditConfigFilter != null
+            && (auditConfigFilter.getDisabledCategories().contains(msg.getCategory())
+                || auditConfigFilter.getDisabledTransportCategories().contains(msg.getCategory()))) {
             return;
         }
         save(msg);

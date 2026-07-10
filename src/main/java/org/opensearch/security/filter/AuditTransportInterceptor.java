@@ -8,6 +8,10 @@
 
 package org.opensearch.security.filter;
 
+import java.util.List;
+import java.util.Set;
+import java.util.stream.Collectors;
+
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 
@@ -44,6 +48,9 @@ public class AuditTransportInterceptor implements TransportInterceptor {
     private final ClusterService clusterService;
     private final ThreadPool threadPool;
     private final WildcardMatcher ignoreActionsMatcher;
+    private final WildcardMatcher ignoreUsersMatcher;
+    private final WildcardMatcher ignoreRequestsMatcher;
+    private final Set<AuditCategory> disabledCategories;
 
     public AuditTransportInterceptor(AuditLog auditLog, ClusterService clusterService, ThreadPool threadPool, Settings settings) {
         this.auditLog = auditLog;
@@ -56,6 +63,41 @@ public class AuditTransportInterceptor implements TransportInterceptor {
             "cluster:monitor/*",
             "indices:monitor/*"
         );
+
+        // Respect same ignore settings as AuditActionFilter
+        List<String> ignoreUsers = settings.getAsList(
+            ConfigConstants.OPENDISTRO_SECURITY_AUDIT_IGNORE_USERS,
+            List.of()
+        );
+        this.ignoreUsersMatcher = WildcardMatcher.from(ignoreUsers);
+
+        List<String> ignoreRequests = settings.getAsList(
+            ConfigConstants.OPENDISTRO_SECURITY_AUDIT_IGNORE_REQUESTS,
+            List.of()
+        );
+        this.ignoreRequestsMatcher = WildcardMatcher.from(ignoreRequests);
+
+        // Respect disabled transport categories (check unified setting first, then transport-specific)
+        List<String> unifiedDisabledCats = settings.getAsList(
+            ConfigConstants.SECURITY_AUDIT_CONFIG_DISABLED_CATEGORIES,
+            List.of()
+        );
+        List<String> disabledCats;
+        if (!unifiedDisabledCats.isEmpty()) {
+            disabledCats = unifiedDisabledCats;
+        } else {
+            disabledCats = settings.getAsList(
+                ConfigConstants.OPENDISTRO_SECURITY_AUDIT_CONFIG_DISABLED_TRANSPORT_CATEGORIES,
+                ConfigConstants.OPENDISTRO_SECURITY_AUDIT_DISABLED_TRANSPORT_CATEGORIES_DEFAULT
+            );
+        }
+        this.disabledCategories = disabledCats.stream()
+            .map(s -> {
+                try { return AuditCategory.valueOf(s.toUpperCase()); }
+                catch (Exception e) { return null; }
+            })
+            .filter(c -> c != null)
+            .collect(Collectors.toSet());
     }
 
     @Override
@@ -70,7 +112,22 @@ public class AuditTransportInterceptor implements TransportInterceptor {
             public void messageReceived(T request, TransportChannel channel, Task task) throws Exception {
                 // Skip noisy internal actions
                 if (!ignoreActionsMatcher.test(action)) {
-                    logTransportEvent(action, request, task);
+                    // Skip if REQUEST_AUDIT is disabled
+                    if (!disabledCategories.contains(AuditCategory.REQUEST_AUDIT)) {
+                        // Skip ignored requests (action or class name)
+                        if (!ignoreRequestsMatcher.test(action)
+                            && !ignoreRequestsMatcher.test(request.getClass().getSimpleName())) {
+                            // Skip ignored users
+                            String principal = threadPool.getThreadContext()
+                                .getTransient(ConfigConstants.OPENDISTRO_SECURITY_SSL_PRINCIPAL);
+                            User user = threadPool.getThreadContext()
+                                .getTransient(ConfigConstants.OPENDISTRO_SECURITY_USER);
+                            String effectiveUser = user != null ? user.getName() : principal;
+                            if (effectiveUser == null || !ignoreUsersMatcher.test(effectiveUser)) {
+                                logTransportEvent(action, request, task);
+                            }
+                        }
+                    }
                 }
                 // Always proceed — audit is non-blocking
                 actualHandler.messageReceived(request, channel, task);

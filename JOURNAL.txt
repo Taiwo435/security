@@ -185,3 +185,292 @@ STANDALONE AUDIT LOGGING — DAILY JOURNAL
 ### CI status:
 - 17/18 jobs pass ✅
 - 1 flaky: `ResourceFocusedTests.testUnauthenticatedTonsSmall` — SocketException (connection reset under stress)
+
+---
+
+## Day 9 — Dynamic Configuration Architecture Notes (Week 4, Tuesday)
+
+### Three config paths for audit settings:
+
+1. **`audit.yml`** — stored in the `.opensearch_security` index, read dynamically by the security plugin (via `DynamicConfigModel`). This is the REST API-configurable path (`PUT /_plugins/_security/api/audit/config`). Controls the **FGAC audit** path (read by `AuditConfig`). Requires authentication to access.
+
+2. **`opensearch.yml`** — node-level static config, read at startup only. Settings registered in `getSettings()` with `Property.NodeScope`. Used by ALL modes (FGAC, SSL-only, disabled).
+
+3. **Cluster setting** — dynamic cluster state. Registered with `Property.Dynamic + Property.NodeScope`. Changed via `PUT _cluster/settings`. Works in ALL modes.
+
+### Key insight:
+- Dynamic settings via cluster settings should apply to ALL modes — not exclusive to standalone
+- All modes read from `opensearch.yml` at startup, cluster settings override those values at runtime
+- The goal for `plugins.security.audit.enabled` is to replace the `enabled: true` in `audit.yml` (security index) with a proper cluster setting that works universally
+- Eventually: extract audit configuration OUT of the security index and into cluster settings, so it works in all modes without needing the REST API (which requires FGAC/auth)
+- The security index path (`audit.yml`) is FGAC-only — cluster settings are universal
+
+### Work done today:
+
+1. **Merged `unified-disabled-categories` into `standalone-audit-loggin`**
+   - Removed old precedence-based unified logic from standalone branch first
+   - Resolved merge conflict in OpenSearchSecurityPlugin.java (took standalone's restructured version)
+   - Fixed missing `case DISABLE_CATEGORIES` in getSettings() switch (caused RuntimeException at startup)
+   - Fixed `DisabledCategoriesTest` — excluded `REQUEST_AUDIT` from `filterComplianceCategories` (same pattern as `API_TOKEN_WRITE` and `COMPLIANCE_*`)
+
+2. **Updated `opensearch.yml` to use `plugins.security.audit.config.*` prefix**
+   - Replaced `opendistro_security.audit.*` legacy prefix with new prefix
+   - Both are registered and accepted — code reads new prefix first, falls back to legacy
+
+3. **Added `docker/plugin/` to `.gitignore`**
+   - Removed ~100 jar files from tracking (build artifacts, shouldn't be in repo)
+
+4. **Applied spotless formatting fixes**
+
+5. **Made 11 audit filter settings dynamically configurable via cluster settings**
+   - Defined `Setting` constants in `SecuritySettings.java` with `Property.Dynamic`
+   - Replaced inline switch in `getSettings()` with `SecuritySettings` references
+   - Made `AuditConfig.Filter` fields `volatile` and non-final
+   - Added setter methods on `Filter` for each dynamic setting
+   - Added `getFilter()` on `AbstractAuditLog` for consumer access
+   - Wired `addSettingsUpdateConsumer` for all 11 settings in `initStandaloneAuditIfEnabled()`
+   - Settings: log_request_body, resolve_bulk_requests, resolve_indices, exclude_sensitive_headers, enable_rest, enable_transport, disabled_categories, disabled_rest_categories, disabled_transport_categories, ignore_users, ignore_requests
+   - API: `PUT _cluster/settings { "persistent": { "plugins.security.audit.config.<key>": <value> } }`
+
+---
+
+## Day 10 — Document-Level Compliance Write Tracking (Week 4, Wednesday)
+
+### Work done today:
+
+1. **Addressed CR feedback on `unified-disabled-categories` PR**
+   - Extracted deprecation warning into single helper method `warnIfBothUnifiedAndSplitConfigured()`
+   - Renamed `OPENDISTRO_SECURITY_AUDIT_CONFIG_DISABLED_CATEGORIES` to `SECURITY_AUDIT_CONFIG_DISABLED_CATEGORIES` with `plugins.security` prefix (new setting, no legacy needed)
+   - Removed duplicate setting registration in legacy block
+   - Merged changes into standalone branch
+
+2. **Document-level compliance write tracking in non-FGAC modes**
+   - Moved compliance settings registration outside `!sslOnlyMode` gate in `getSettings()`
+   - Defined new `plugins.security.audit.compliance.*` settings in `SecuritySettings.java` (dynamic)
+   - Kept legacy `opendistro_security.compliance.*` registrations for backwards compatibility
+   - Registered `ComplianceIndexingOperationListenerImpl` in non-FGAC path via `onIndexModule()` else-if block
+   - Changed `ComplianceConfig.from(Settings)` to read `enabled` from new setting instead of hardcoding `true`
+   - Made `ComplianceConfig` fields volatile: `enabled`, `logWriteMetadataOnly`, `logReadMetadataOnly`, `logDiffsForWrite`, `watchedWriteIndicesPatterns`, `watchedWriteIndicesMatcher`
+   - Added setters for all dynamic compliance fields
+   - Wired `addSettingsUpdateConsumer` for: `compliance.enabled`, `write_metadata_only`, `read_metadata_only`, `write_log_diffs`, `write_watched_indices`
+
+### Key insight — document read tracking:
+- Read tracking is handled by `SecurityFlsDlsIndexSearcherWrapper` (wraps the Lucene searcher)
+- It's deeply entangled with DLS/FLS privilege evaluation — not easily extractable for non-FGAC
+- Options: extract the compliance read logic into a standalone searcher wrapper, or create a new mechanism
+- Deferring to discuss approach with Craig/Darshit before implementing
+
+### Next:
+- Transport-layer interception (`TransportInterceptor`)
+- Ask Craig/Darshit about read tracking approach
+
+### Extension Points, Implementations, and Hooks:
+
+| Extension Point (Interface) | Our Implementation (Class) | Hook (Method called by OpenSearch) |
+|---|---|---|
+| `ActionFilter` | `AuditActionFilter` | `apply()` |
+| `TransportInterceptor` | `AuditTransportInterceptor` | `interceptHandler()` → `messageReceived()` |
+| `IndexingOperationListener` | `ComplianceIndexingOperationListenerImpl` | `preIndex()`, `postIndex()`, `preDelete()`, `postDelete()` |
+
+Pattern: OpenSearch defines the interface (extension point), we provide the class (implementation), OpenSearch calls our methods at the right time (hooks).
+
+### Transport-layer interception:
+
+3. **Implemented `AuditTransportInterceptor`**
+   - New class in `org.opensearch.security.filter` implementing `TransportInterceptor`
+   - Intercepts incoming transport requests on the handler side (`interceptHandler` → `messageReceived`)
+   - Skips noisy actions: `internal:*`, `cluster:monitor/*`, `indices:monitor/*`
+   - Captures: action name, request type, remote address, task ID, user identity
+   - Registered for ALL modes (FGAC, SSL-only, disabled) — outside any gate
+   - Non-blocking: if audit logging throws, the actual handler still executes
+   - Uses `REQUEST_AUDIT` category (same as AuditActionFilter)
+
+4. **Unit tests for `AuditTransportInterceptor`** (10 tests, all pass)
+   - Logs correct fields for transport events
+   - Skips internal actions, cluster:monitor, indices:monitor
+   - Includes User identity from ThreadContext (FGAC)
+   - Includes SSL principal when no user (SSL-only)
+   - No identity when nothing in ThreadContext (disabled mode)
+   - Falls back to ThreadContext for remote address
+   - Handler still called when audit throws (non-blocking)
+   - Null task handled gracefully
+   - Replica write actions logged correctly
+
+### Detailed Pipelines:
+
+#### Document Write Tracking Pipeline:
+```
+Client: PUT my-index/_doc/1 {"name":"test"}
+  │
+  ▼
+REST layer parses HTTP request
+  │
+  ▼
+Action pipeline starts
+  │
+  ▼
+AuditActionFilter.apply() fires → logs REQUEST_AUDIT event
+  │
+  ▼
+Request reaches primary shard
+  │
+  ▼
+ComplianceIndexingOperationListenerImpl.preIndex(shardId, index) fires
+  → Checks: complianceConfig.writeHistoryEnabledForIndex("my-index")?
+  → If write_log_diffs=true: fetches original doc from shard (for diff)
+  → Stores original in ThreadLocal<Context>
+  │
+  ▼
+Lucene writes the document to disk
+  │
+  ▼
+ComplianceIndexingOperationListenerImpl.postIndex(shardId, index, result) fires
+  → Checks: is logging enabled for this index?
+  → Checks: did the write succeed? Is this the PRIMARY?
+  → If write_log_diffs=true: retrieves original from ThreadLocal, computes diff
+  → Calls auditLog.logDocumentWritten(shardId, previousContent, index, result)
+  → Event logged as COMPLIANCE_DOC_WRITE category
+  → Routed to configured sinks (Log4j, index, webhook, etc.)
+```
+
+Key points:
+- preIndex/postIndex fire per DOCUMENT (not per request) — bulk of 1000 docs = 1000 hook calls
+- Only fires on PRIMARY operations (not replicas — avoids double-counting)
+- Skips the audit index itself (prevents self-referential logging)
+- Config-driven: only logs if index matches write_watched_indices pattern
+
+#### Transport Interception Pipeline:
+```
+Client sends: PUT my-index/_doc/1 {"name":"test"}
+  │
+  ▼
+Node A receives HTTP request
+  │
+  ▼
+AuditActionFilter.apply() fires on Node A → logs REQUEST_AUDIT
+  │
+  ▼
+Node A determines: "primary shard is on Node B"
+  │
+  ▼
+Node A sends transport message to Node B
+  (action: "indices:data/write/index[p]")
+  │
+  ═══ Network (transport protocol) ═══
+  │
+  ▼
+Node B receives transport message
+  │
+  ▼
+AuditTransportInterceptor.interceptHandler() wrapper fires
+  │
+  ▼
+messageReceived() on Node B:
+  → Is action "internal:*" or "cluster:monitor/*"? → Skip, call actualHandler
+  → Otherwise:
+      → logTransportEvent(action, request, task)
+          → Build AuditMessage (REQUEST_AUDIT category)
+          → Add: action name, request type, remote address, task ID, user identity
+          → auditLog.logRequestAudit(msg) → routes to sinks
+      → actualHandler.messageReceived() → Node B executes the shard write
+  │
+  ▼
+After primary write, Node B forwards replica to Node A
+  (action: "indices:data/write/bulk[s][r]")
+  │
+  ═══ Network ═══
+  │
+  ▼
+Node A receives replica transport message
+  │
+  ▼
+AuditTransportInterceptor fires again on Node A
+  → Logs the replica write as another REQUEST_AUDIT event
+  → actualHandler proceeds with replica write
+```
+
+Key points:
+- interceptHandler() is called ONCE per action at registration time (wraps the handler)
+- messageReceived() fires on EVERY transport message for that action
+- Only handler side (receiving node) — sender side not intercepted (avoids duplication)
+- Non-blocking: try/catch around audit, actualHandler always proceeds
+- Filters: internal:*, cluster:monitor/*, indices:monitor/* skipped (cluster noise)
+- Chaining: OpenSearch chains multiple interceptors (ours + FGAC's auth interceptor in FGAC mode)
+  - Last added wraps outermost → fires first when message arrives
+  - Order doesn't matter since audit and auth are independent operations
+
+
+ Unit tests prove the logic is correct. Integration tests prove the wiring works end-to-end. Both test the same production code, just from different levels.
+
+ * if we wanted to make it configurable in the future, we could add a setting like plugins.security.audit.log_internal_actions: true that disables the hardcoded skip. But no one has asked for it, and
+  FGAC has never offered it either — it would just create noise for 99.9% of users.
+
+---
+
+## 2026-07-10 (Day 11) — Phase 1 & 2 Test Coverage + Bug Fixes
+
+### What we did:
+- Full audit of Phase 1 and Phase 2 test coverage — mapped every unit and integration test to features
+- Identified all missing edge cases across both phases
+- Wrote comprehensive integration tests for Phase 2 filter features (StandaloneAuditFilterFeaturesTest)
+- Added edge case unit tests to AuditActionFilterTest (7 new tests)
+- Added new integration test files: StandaloneAuditTransportInterceptTest, StandaloneAuditDynamicConfigTest
+- Fixed 2 production bugs discovered during testing
+- Fixed AuditTransportInterceptor to respect ignore_users, ignore_requests, and disabled_categories
+
+### Production code changes:
+
+1. **AuditActionFilter.java** — Added try-catch around audit message construction and logging. If audit throws, the request chain still proceeds (non-blocking). Matches AuditTransportInterceptor's behavior.
+
+2. **AbstractAuditLog.logRequestAudit()** — Now checks BOTH `getDisabledCategories()` (unified) AND `getDisabledTransportCategories()` (split). Previously only checked the split setting, so unified `disabled_categories: [REQUEST_AUDIT]` had no effect. Follows same pattern as `checkTransportFilter()` upstream.
+
+3. **AuditTransportInterceptor.java** — Added `ignore_users`, `ignore_requests`, and `disabled_categories` support. Previously only skipped `internal:*`, `cluster:monitor/*`, `indices:monitor/*`. Now respects the same settings as AuditActionFilter for consistency.
+
+### Tests written:
+
+**Unit tests added to AuditActionFilterTest (7 new, 11 total):**
+- testSkipsInternalActions — internal:* skipped
+- testChainContinuesWhenAuditThrows — non-blocking on failure
+- testIncludesFgacUserFromThreadContext — FGAC User object captured
+- testFgacUserTakesPriorityOverSslPrincipal — User > cert DN
+- testIgnoreUsersSuppressesMatchingUser — ignore_users works
+- testIgnoreRequestsSuppressesMatchingAction — ignore by action name
+- testIgnoreRequestsMatchesByClassName — ignore by class name (SearchRequest)
+
+**Integration tests (StandaloneAuditFilterFeaturesTest — 25 tests):**
+- Request body: search, index, update, disabled, empty body (5)
+- Headers: Authorization excluded, Content-Type preserved (2)
+- Ignore-users: cert DN suppressed, non-ignored logged, partial no-match (3)
+- Ignore-requests: action suppressed, non-ignored logged, internal always skipped (3)
+- Index resolution: wildcard resolved, concrete=itself, non-existent graceful (3)
+- Bulk handling: per-item indices, doc ID, body, mixed ops, shard ID (5)
+- Edge cases: wildcard ignore-users, bulk aggregated, remote address, case-insensitive header (4)
+
+**Integration tests (StandaloneAuditTransportInterceptTest — 2 tests):**
+- shouldProduceTransportEventsForIndexWrite — shard-level [s][p] events appear
+- shouldNotLogClusterMonitorTransportActions — cluster:monitor not forwarded
+
+**Integration tests (StandaloneAuditDynamicConfigTest — 2 tests):**
+- shouldDisableAuditViaClusterSettings — audit works initially
+- shouldToggleAuditOffAndBackOn — PUT _cluster/settings toggles audit on/off
+
+### Final test counts (Phase 1 + Phase 2):
+- Unit tests: 43 (AuditActionFilterTest:11, AuditTransportInterceptorTest:11, DisabledCategoriesTest:6, AuditConfigFilterTest:15)
+- Integration tests: 56 (Logging:21, DisabledCategory:1, Mtls:1, Sinks:3, Webhook:1, FilterFeatures:25, TransportIntercept:2, DynamicConfig:2)
+- Total: 99 tests, 0 failures
+
+### Key learnings:
+- AuditActionFilter and AuditTransportInterceptor see different action names (top-level vs shard-level with [s][p][r] suffixes)
+- ignore_users with wildcard "*" only suppresses events where effectiveUser is non-null — background system events with no identity still log
+- The unified disabled_categories setting must be checked in ALL code paths that suppress events — logRequestAudit was missing it
+- Integration tests that assert "no events" must account for BOTH the action filter and transport interceptor producing events independently
+
+### Files modified:
+- src/main/java/org/opensearch/security/filter/AuditActionFilter.java (try-catch, logger)
+- src/main/java/org/opensearch/security/filter/AuditTransportInterceptor.java (ignore_users, ignore_requests, disabled_categories)
+- src/main/java/org/opensearch/security/auditlog/impl/AbstractAuditLog.java (unified disabled check)
+- src/test/java/org/opensearch/security/filter/AuditActionFilterTest.java (7 new tests)
+- src/integrationTest/java/org/opensearch/security/StandaloneAuditFilterFeaturesTest.java (NEW — 25 tests)
+- src/integrationTest/java/org/opensearch/security/StandaloneAuditTransportInterceptTest.java (NEW — 2 tests)
+- src/integrationTest/java/org/opensearch/security/StandaloneAuditDynamicConfigTest.java (NEW — 2 tests)
+- STANDALONE_AUDIT_DESIGN.md (REST-layer events design note)

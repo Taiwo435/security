@@ -10,6 +10,7 @@ package org.opensearch.security.filter;
 
 import java.net.InetAddress;
 import java.net.InetSocketAddress;
+import java.util.List;
 import java.util.Map;
 
 import org.junit.Before;
@@ -22,6 +23,7 @@ import org.opensearch.action.support.ActionRequestMetadata;
 import org.opensearch.cluster.ClusterName;
 import org.opensearch.cluster.node.DiscoveryNode;
 import org.opensearch.cluster.service.ClusterService;
+import org.opensearch.common.settings.Settings;
 import org.opensearch.common.util.concurrent.ThreadContext;
 import org.opensearch.core.action.ActionListener;
 import org.opensearch.core.action.ActionResponse;
@@ -29,6 +31,8 @@ import org.opensearch.core.common.transport.TransportAddress;
 import org.opensearch.security.auditlog.AuditLog;
 import org.opensearch.security.auditlog.impl.AuditCategory;
 import org.opensearch.security.auditlog.impl.AuditMessage;
+import org.opensearch.security.support.ConfigConstants;
+import org.opensearch.security.user.User;
 import org.opensearch.tasks.Task;
 import org.opensearch.threadpool.ThreadPool;
 
@@ -38,7 +42,10 @@ import static org.hamcrest.MatcherAssert.assertThat;
 import static org.hamcrest.Matchers.arrayContaining;
 import static org.hamcrest.Matchers.equalTo;
 import static org.hamcrest.Matchers.notNullValue;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -177,5 +184,141 @@ public class AuditActionFilterTest {
 
         AuditMessage msg = captor.getValue();
         assertThat(msg.getEffectiveUser(), equalTo(null));
+    }
+
+    @SuppressWarnings("unchecked")
+    @Test
+    public void testSkipsInternalActions() throws Exception {
+        SearchRequest request = new SearchRequest("my-index");
+        ActionFilterChain<SearchRequest, ActionResponse> chain = mock(ActionFilterChain.class);
+        ActionListener<ActionResponse> listener = mock(ActionListener.class);
+
+        filter.apply(null, "internal:coordination/fault_detection/follower_check", request, ActionRequestMetadata.empty(), listener, chain);
+
+        // Should NOT log audit event for internal actions
+        verify(auditLog, never()).logRequestAudit(any());
+
+        // But chain should still proceed
+        verify(chain).proceed(null, "internal:coordination/fault_detection/follower_check", request, listener);
+    }
+
+    @SuppressWarnings("unchecked")
+    @Test
+    public void testChainContinuesWhenAuditThrows() throws Exception {
+        // Force auditLog.logRequestAudit to throw
+        doThrow(new RuntimeException("simulated audit failure")).when(auditLog).logRequestAudit(any());
+
+        ClusterHealthRequest request = new ClusterHealthRequest();
+        ActionFilterChain<ClusterHealthRequest, ActionResponse> chain = mock(ActionFilterChain.class);
+        ActionListener<ActionResponse> listener = mock(ActionListener.class);
+
+        filter.apply(null, "cluster:monitor/health", request, ActionRequestMetadata.empty(), listener, chain);
+
+        // Chain should still proceed despite audit failure
+        verify(chain).proceed(null, "cluster:monitor/health", request, listener);
+    }
+
+    @SuppressWarnings("unchecked")
+    @Test
+    public void testIncludesFgacUserFromThreadContext() throws Exception {
+        // Simulate FGAC mode where BackendRegistry has populated the user
+        User fgacUser = new User("admin_user");
+        threadPool.getThreadContext().putTransient(ConfigConstants.OPENDISTRO_SECURITY_USER, fgacUser);
+
+        ClusterHealthRequest request = new ClusterHealthRequest();
+        ActionFilterChain<ClusterHealthRequest, ActionResponse> chain = mock(ActionFilterChain.class);
+        ActionListener<ActionResponse> listener = mock(ActionListener.class);
+
+        filter.apply(null, "cluster:monitor/health", request, ActionRequestMetadata.empty(), listener, chain);
+
+        ArgumentCaptor<AuditMessage> captor = ArgumentCaptor.forClass(AuditMessage.class);
+        verify(auditLog).logRequestAudit(captor.capture());
+
+        AuditMessage msg = captor.getValue();
+        // FGAC user takes priority over SSL principal
+        assertThat(msg.getEffectiveUser(), equalTo("admin_user"));
+    }
+
+    @SuppressWarnings("unchecked")
+    @Test
+    public void testFgacUserTakesPriorityOverSslPrincipal() throws Exception {
+        // Both SSL principal and FGAC user present — user wins
+        threadPool.getThreadContext().putTransient(ConfigConstants.OPENDISTRO_SECURITY_SSL_PRINCIPAL, "CN=node-cert,O=org");
+        User fgacUser = new User("real_user");
+        threadPool.getThreadContext().putTransient(ConfigConstants.OPENDISTRO_SECURITY_USER, fgacUser);
+
+        ClusterHealthRequest request = new ClusterHealthRequest();
+        ActionFilterChain<ClusterHealthRequest, ActionResponse> chain = mock(ActionFilterChain.class);
+        ActionListener<ActionResponse> listener = mock(ActionListener.class);
+
+        filter.apply(null, "cluster:monitor/health", request, ActionRequestMetadata.empty(), listener, chain);
+
+        ArgumentCaptor<AuditMessage> captor = ArgumentCaptor.forClass(AuditMessage.class);
+        verify(auditLog).logRequestAudit(captor.capture());
+
+        AuditMessage msg = captor.getValue();
+        assertThat(msg.getEffectiveUser(), equalTo("real_user"));
+    }
+
+    @SuppressWarnings("unchecked")
+    @Test
+    public void testIgnoreUsersSuppressesMatchingUser() throws Exception {
+        Settings ignoreSettings = Settings.builder()
+            .putList(ConfigConstants.OPENDISTRO_SECURITY_AUDIT_IGNORE_USERS, "ignored_admin")
+            .build();
+        AuditActionFilter ignoreFilter = new AuditActionFilter(auditLog, clusterService, threadPool, ignoreSettings);
+
+        User ignoredUser = new User("ignored_admin");
+        threadPool.getThreadContext().putTransient(ConfigConstants.OPENDISTRO_SECURITY_USER, ignoredUser);
+
+        ClusterHealthRequest request = new ClusterHealthRequest();
+        ActionFilterChain<ClusterHealthRequest, ActionResponse> chain = mock(ActionFilterChain.class);
+        ActionListener<ActionResponse> listener = mock(ActionListener.class);
+
+        ignoreFilter.apply(null, "cluster:monitor/health", request, ActionRequestMetadata.empty(), listener, chain);
+
+        // Should NOT log audit event for ignored user
+        verify(auditLog, never()).logRequestAudit(any());
+        // But chain should still proceed
+        verify(chain).proceed(null, "cluster:monitor/health", request, listener);
+    }
+
+    @SuppressWarnings("unchecked")
+    @Test
+    public void testIgnoreRequestsSuppressesMatchingAction() throws Exception {
+        Settings ignoreSettings = Settings.builder()
+            .putList(ConfigConstants.OPENDISTRO_SECURITY_AUDIT_IGNORE_REQUESTS, "indices:data/read/search")
+            .build();
+        AuditActionFilter ignoreFilter = new AuditActionFilter(auditLog, clusterService, threadPool, ignoreSettings);
+
+        SearchRequest request = new SearchRequest("my-index");
+        ActionFilterChain<SearchRequest, ActionResponse> chain = mock(ActionFilterChain.class);
+        ActionListener<ActionResponse> listener = mock(ActionListener.class);
+
+        ignoreFilter.apply(null, "indices:data/read/search", request, ActionRequestMetadata.empty(), listener, chain);
+
+        // Should NOT log audit event for ignored action
+        verify(auditLog, never()).logRequestAudit(any());
+        // But chain should still proceed
+        verify(chain).proceed(null, "indices:data/read/search", request, listener);
+    }
+
+    @SuppressWarnings("unchecked")
+    @Test
+    public void testIgnoreRequestsMatchesByClassName() throws Exception {
+        Settings ignoreSettings = Settings.builder()
+            .putList(ConfigConstants.OPENDISTRO_SECURITY_AUDIT_IGNORE_REQUESTS, "SearchRequest")
+            .build();
+        AuditActionFilter ignoreFilter = new AuditActionFilter(auditLog, clusterService, threadPool, ignoreSettings);
+
+        SearchRequest request = new SearchRequest("my-index");
+        ActionFilterChain<SearchRequest, ActionResponse> chain = mock(ActionFilterChain.class);
+        ActionListener<ActionResponse> listener = mock(ActionListener.class);
+
+        ignoreFilter.apply(null, "indices:data/read/search", request, ActionRequestMetadata.empty(), listener, chain);
+
+        // Should NOT log — class name "SearchRequest" matches
+        verify(auditLog, never()).logRequestAudit(any());
+        verify(chain).proceed(null, "indices:data/read/search", request, listener);
     }
 }

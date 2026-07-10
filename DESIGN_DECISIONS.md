@@ -323,3 +323,148 @@ This document records the major design decisions made during implementation, wha
 | Works without auth | Yes — cluster settings API has no auth requirement in non-FGAC | Security index API requires admin certs in FGAC — unclear how it works without auth |
 
 **Why we chose this:** The cluster setting approach gives us a runtime toggle with near-zero implementation cost. OpenSearch handles all the plumbing (API, persistence, propagation). Bootstrapping the security index in non-FGAC mode would reintroduce the very infrastructure dependency we're trying to avoid — and would require solving permissions without an auth layer. The cluster setting is also the first step toward Craig's suggestion of extracting the enabled toggle from the security index entirely, so FGAC could eventually use the same mechanism.
+
+---
+
+## 17. Dynamic Filter Settings: Volatile Fields + Setters vs Rebuild Filter Atomically
+
+**Task:** Make the 11 audit filter settings (log_request_body, ignore_users, disabled_categories, etc.) dynamically configurable via `PUT _cluster/settings` without restart.
+
+**What we did:** Made the relevant `AuditConfig.Filter` fields `volatile` (non-final), added setter methods for each, defined `Setting` constants in `SecuritySettings.java` with `Property.Dynamic`, replaced the inline switch in `getSettings()` with those constants, and wired `addSettingsUpdateConsumer` for each setting that calls the corresponding setter.
+
+**Alternative A:** Rebuild the entire `Filter` object atomically on each settings change using `AtomicReference<Filter>`.
+
+**Alternative B:** Keep fields `final`, rebuild a new `Filter` from current settings + the changed value, and swap via `onAuditConfigFilterChanged()`.
+
+| | Volatile fields + setters (our approach) | AtomicReference\<Filter\> rebuild | Full rebuild via onAuditConfigFilterChanged |
+|---|---|---|---|
+| Consistency with codebase | Matches existing pattern (SSLConfig.setDualModeEnabled, DlsFlsValveImpl) | Not used anywhere in the codebase | Used for security index config changes only |
+| Atomicity | Individual field updates — not atomic across multiple fields | Full object swap — atomic | Full object swap — atomic |
+| Performance | Single field write per change | Full object construction per change | Full object construction per change |
+| Thread safety | Volatile guarantees visibility across threads | AtomicReference guarantees visibility | Volatile reference guarantees visibility |
+| Code complexity | One setter per field (~40 lines total) | Factory method + rebuild logic (~80 lines) | Reuse existing from() + full settings object construction |
+| Partial update risk | If 2 settings change simultaneously, there's a brief window where one is updated and other isn't | No risk — all-or-nothing swap | No risk — all-or-nothing swap |
+
+**Why we chose this:** The existing codebase consistently uses the simple setter pattern for dynamic settings (SSLConfig, DlsFlsValveImpl, BackendRegistry). The partial update risk is negligible in practice — cluster settings updates are rare (operator actions, not per-request), and the window between two field writes is nanoseconds. Rebuilding the entire Filter for a single boolean change is wasteful. The volatile keyword ensures all request-handling threads see the updated value immediately.
+
+**Key implementation detail:** We defined `Setting` constants in `SecuritySettings.java` (not inline in the switch) so they can be referenced in both `getSettings()` for registration and `addSettingsUpdateConsumer()` for the consumer wiring — following the same pattern as `AUDIT_ENABLED_SETTING`, `SSL_DUAL_MODE_SETTING`, etc. The inline switch: Before our change, the getSettings() method had a switch that created Setting objects on the fly inside the lambda:
+case LOG_REQUEST_BODY:
+    return Setting.boolSetting(filterEntry.getKeyWithNamespace(), true, Property.NodeScope, Property.Filtered);
+
+These were "inline" because the Setting objects were created anonymously — never stored in a variable, just returned and added to the list. That meant we couldn't reference them later for
+addSettingsUpdateConsumer (you need to pass the same Setting object).
+
+---
+
+## 18. Compliance Write Tracking in Non-FGAC: Reuse Existing Listener vs New Implementation
+
+**Task:** Enable document-level write tracking (`COMPLIANCE_DOC_WRITE`) in SSL-only and disabled modes, where the `ComplianceIndexingOperationListenerImpl` was previously never registered.
+
+**What we did:** Reused the existing `ComplianceIndexingOperationListenerImpl` as-is — registered it in an `else if` block in `onIndexModule()` for non-FGAC modes when audit is active. Added a `plugins.security.audit.compliance.enabled` setting to control it, and moved compliance settings outside the `!sslOnlyMode` gate.
+
+**Alternative A:** Create a new, standalone compliance listener specifically for non-FGAC modes (without any FGAC-specific logic).
+
+**Alternative B:** Make `ComplianceIndexingOperationListenerImpl` conditional on a runtime flag instead of a gate in `onIndexModule()`.
+
+| | Reuse existing listener (our approach) | New standalone listener | Runtime flag |
+|---|---|---|---|
+| Code duplication | None — same class, different registration path | Full duplication of listener logic | None |
+| Correctness | Proven — same logic that FGAC uses in production | Needs new testing from scratch | Same logic |
+| FGAC dependencies | None — listener only depends on AuditLog + ThreadPool + ComplianceConfig | None | None |
+| Registration complexity | One else-if block in onIndexModule() | New class + new registration | Modify existing if-condition |
+| Future extraction | Listener already self-contained, moves easily to standalone plugin | Would be the thing that moves | Entangles registration logic |
+| Read wrapper coupling | Not relevant (listener is only for writes) | Same | Same |
+
+**Why we chose this:** `ComplianceIndexingOperationListenerImpl` has zero FGAC dependencies — it only needs an `AuditLog` instance, a `ThreadPool`, and a `ComplianceConfig`. It doesn't call SecurityFilter, BackendRegistry, or read from the security index. The only reason it didn't work in non-FGAC mode was that `onIndexModule()` never registered it. Adding an else-if block is minimal code with maximum reuse.
+
+---
+
+## 19. Compliance Settings: New Prefix + Legacy Fallback vs Migrate Everything
+
+**Task:** Make compliance settings available in non-FGAC modes (outside the `!sslOnlyMode` gate) and dynamically configurable.
+
+**What we did:** Defined new `Setting` constants in `SecuritySettings.java` under `plugins.security.audit.compliance.*` with `Property.Dynamic`. Kept the existing `opendistro_security.compliance.*` registrations as legacy fallbacks (non-dynamic, `Property.NodeScope` only). `ComplianceConfig.from(Settings)` reads from the new prefix for `enabled`, while other fields still read from legacy keys.
+
+**Alternative A:** Migrate all compliance settings to `plugins.security.*` prefix in one go and remove the `opendistro_security.*` registrations.
+
+**Alternative B:** Just add `Property.Dynamic` to the existing `opendistro_security.*` registrations without introducing new prefix.
+
+| | New prefix + legacy fallback (our approach) | Full migration | Dynamic on legacy only |
+|---|---|---|---|
+| Backwards compatibility | Users with opendistro_security.* in opensearch.yml still work | Breaking — users must update all configs | Full compat |
+| New users | Use modern plugins.security.* prefix | Same | Stuck with legacy prefix |
+| Dynamic support | New prefix settings are dynamic | Would be dynamic | Dynamic |
+| Migration path | Gradual — can migrate other fields later | All-or-nothing | No migration |
+| Code complexity | Both registered (two paths) | One path (cleaner) | One path |
+| Consistency with Craig's guidance | Matches "use plugins.security for new settings, leave legacy for old" | Goes further than asked | Doesn't follow guidance |
+
+**Why we chose this:** Craig's feedback on the `disabled_categories` PR was explicit: "for new settings use `plugins.security` prefix, for existing ones leave legacy with deprecation." This approach follows that pattern exactly. `compliance.enabled` is effectively a new setting (it was hardcoded before, never user-configurable from opensearch.yml), so it gets the new prefix. The other fields already exist under `opendistro_security.*` — users have them in their configs. We keep those working while introducing the new prefix for dynamic support. Full migration can happen in a follow-up PR.
+
+---
+
+## 20. Compliance Read Tracking in Non-FGAC: New Lightweight Wrapper vs Reuse FGAC Wrapper vs SearchOperationListener
+
+**Task:** Enable document-level read tracking (`COMPLIANCE_DOC_READ`) in non-FGAC modes, where `SecurityFlsDlsIndexSearcherWrapper` is never registered.
+
+**What we chose:** Option 1 — create a new lightweight `ComplianceReadIndexSearcherWrapper` that wraps the Lucene `DirectoryReader` with compliance tracking only. No DLS/FLS logic. Uses `FieldMasking.FieldMaskingRule.ALLOW_ALL` and reuses the existing `FieldReadCallback` directly.
+
+**Alternative A (Option 2):** Register the full `SecurityFlsDlsIndexSearcherWrapper` in non-FGAC mode with null/no-op values for FGAC dependencies.
+
+**Alternative B (Option 3):** Use `SearchOperationListener` for search-level tracking without field granularity.
+
+| | New lightweight wrapper (our choice) | Full FGAC wrapper with nulls | SearchOperationListener |
+|---|---|---|---|
+| Field-level granularity | Yes — intercepts every field read via StoredFieldVisitor | Yes — same mechanism | No — only knows "a search happened" |
+| `read_watched_fields` support | Yes — FieldReadCallback checks field against config | Yes | No — can't watch specific fields |
+| FGAC dependencies | None — self-contained | Many nulls needed (PrivilegesEvaluationContext, DlsFlsBaseContext, etc.) | None |
+| Risk of NPE / breakage | None — clean class with no null paths | High — SecurityFlsDlsIndexSearcherWrapper expects non-null FGAC objects | None |
+| Code complexity | ~150-200 lines new code | Null checks scattered in existing security-critical class | ~30 lines |
+| Testability | Unit testable with mocks | Requires understanding full FGAC flow | Very easy |
+| Maintainability | Independent — changes to FGAC wrapper don't affect us | Tied to FGAC internals — FGAC refactors break our path | Independent |
+| Upstream reviewer acceptance | Good — clean separation, doesn't touch FGAC code | Bad — reviewers won't want nulls in security-critical class | Good but incomplete feature |
+| Matches FGAC compliance behavior | Yes — same FieldReadCallback, same events | Yes | No — different semantics entirely |
+| Future plugin extraction | Easy — self-contained class moves cleanly | Hard — entangled with FGAC class | Easy |
+| `setReaderWrapper()` availability | Free in non-FGAC (nobody else uses it) | Conflicts with FGAC in same mode | Not applicable (different extension point) |
+
+**Why we chose Option 1:**
+- Field-level read tracking is the whole point of compliance read — Option 3 doesn't deliver it
+- Option 2 dirties a security-critical FGAC class with null checks and would likely be rejected by upstream reviewers
+- `FieldReadCallback` itself has zero FGAC dependencies — it just needs `auditLog`, `indexService`, `clusterService`, `threadContext`, and a `FieldMaskingRule`. Wrapping it in a clean reader wrapper is straightforward.
+- `indexModule.setReaderWrapper()` is available in non-FGAC mode (the FGAC path uses it but is gated)
+- Matches the pattern we've established: self-contained classes (`AuditActionFilter`, `AuditTransportInterceptor`, reused `ComplianceIndexingOperationListenerImpl`) that can be extracted into a standalone plugin later
+
+---
+
+## 21. Transport-Layer Interception: Separate Class vs Piggyback on Existing Interceptor
+
+**Task:** Add audit logging at the transport layer to capture inter-node communication, replica writes, and forwarded requests that `ActionFilter` doesn't see.
+
+**What we did:** Created a new `AuditTransportInterceptor` class (Approach B+D) — a standalone `TransportInterceptor` that only intercepts the handler side (incoming requests). Registered unconditionally for all modes alongside the existing FGAC auth interceptor.
+
+**Alternative A:** Piggyback on the existing FGAC `TransportInterceptor` — add audit calls inside it.
+
+**Alternative B:** Create a separate `AuditTransportInterceptor` class.
+
+**Alternative C:** Add audit calls inside `SecurityInterceptor` (the class the FGAC interceptor delegates to).
+
+**Alternative D:** Only intercept handler side (receiving node), skip sender side.
+
+| | Separate class + handler only (our approach: B+D) | Piggyback on FGAC interceptor (A) | Inside SecurityInterceptor (C) | Both sender + handler |
+|---|---|---|---|---|
+| Separation of concerns | Clean — audit logic isolated | Mixed with auth propagation | Deep in FGAC internals | Clean |
+| Works in non-FGAC | Yes — registered outside gate | No — FGAC interceptor is gated | No — SecurityInterceptor is FGAC-only | Yes |
+| Works in FGAC | Yes — both interceptors coexist | Yes | Yes | Yes |
+| Event duplication | None — only receiver logs | None | None | Double-logged (sender + receiver) |
+| Future extraction | Easy — self-contained class | Would need untangling | Deep coupling | Easy |
+| Performance | One handler wrap per action | Same | Same | Two wraps per action |
+| Testability | Unit testable with mocks | Harder — entangled with auth | Very hard | Same as ours |
+
+**Why we chose B+D:**
+- Matches the established pattern (`AuditActionFilter` is also a separate, self-contained class)
+- Works in all modes without touching the FGAC interceptor
+- Handler-only avoids double-logging (the same request logged on both sender and receiver)
+- FGAC's existing interceptor continues doing its auth job undisturbed
+- Easy to unit test — 10 tests covering all edge cases
+- Ready for extraction into standalone plugin
+
+**Key design detail:** We filter `internal:*`, `cluster:monitor/*`, and `indices:monitor/*` to avoid flooding logs with cluster housekeeping traffic. These fire thousands of times per minute and have no forensic value for compliance auditing.

@@ -131,8 +131,8 @@ The prototype commit (`4fa7be5d`) proves the concept with ~30 lines of productio
 ### Phase 3 (Weeks 9–12): Stretch Goals
 - [ ] Document-level compliance tracking (IndexingOperationListener) in non-FGAC modes
 - [ ] REST API for audit configuration (GET/PUT `/_plugins/_audit/config`)
-- [ ] Transport-layer interception
-- [ ] Dynamic config reload without restart
+- [x] Transport-layer interception
+- [x] Dynamic config reload without restart
 - [ ] Documentation and blog post
 
 ---
@@ -184,3 +184,29 @@ The prototype commit (`4fa7be5d`) proves the concept with ~30 lines of productio
 - [OpenSearch Audit Docs](https://opensearch.org/docs/latest/security/audit-logs/)
 - Mentor: Darshit Chanpura
 - Sr. SDE: Craig Perkins
+
+---
+
+## REST-Layer Events in SSL-Only Mode
+
+In SSL-only mode, the REST-layer events that could make sense:
+
+- `BAD_HEADERS` — malformed or suspicious headers (already works in SSL-only, it's not auth-dependent)
+- `SSL_EXCEPTION` — TLS handshake failures (already works)
+
+That's about it for what FGAC already produces at REST. The other FGAC REST events (`AUTHENTICATED`, `FAILED_LOGIN`) are auth-only and meaningless in SSL-only mode.
+
+**Could we have added our own REST event?** We could have logged something like:
+- HTTP method (GET/PUT/POST/DELETE)
+- URL path (`/my-index/_search`)
+- Query parameters
+- Source IP at HTTP layer (before transport conversion)
+- Raw HTTP body (before it's parsed into a transport request)
+
+**Why we didn't:**
+
+1. **One event is better than two** — FGAC's #1 user complaint is fragmentation. One `GET _cluster/health` produces 2+ events with no way to correlate them. We solved this by logging once with everything.
+2. **We already capture all that info** — the REST wrapper stashes headers and IP into ThreadContext, then the action filter pulls them back. The end result is one event with REST info (headers, IP) + transport info (action, indices, body). Best of both worlds.
+3. **No information loss** — anything the REST layer knows that the transport layer doesn't (HTTP method, raw path, query params) could be added to our single event by stashing more in ThreadContext. We just haven't needed it yet.
+
+So it's a design tradeoff: FGAC gives you two events (one REST, one transport) that are hard to correlate. We give you one event with everything. If users specifically need the raw HTTP method/path (not just the transport action name), we could add those fields to our single event without creating a separate REST event.

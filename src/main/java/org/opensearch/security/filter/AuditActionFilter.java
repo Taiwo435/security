@@ -13,6 +13,9 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
+import org.apache.logging.log4j.LogManager;
+import org.apache.logging.log4j.Logger;
+
 import org.opensearch.action.ActionRequest;
 import org.opensearch.action.DocWriteRequest;
 import org.opensearch.action.IndicesRequest;
@@ -56,6 +59,7 @@ import org.opensearch.threadpool.ThreadPool;
  */
 public class AuditActionFilter implements ActionFilter {
 
+    private static final Logger log = LogManager.getLogger(AuditActionFilter.class);
     private static final WildcardMatcher AUTHORIZATION_HEADER = WildcardMatcher.from("Authorization").ignoreCase();
 
     private final AuditLog auditLog;
@@ -176,71 +180,75 @@ public class AuditActionFilter implements ActionFilter {
             return;
         }
 
-        AuditMessage msg = new AuditMessage(AuditCategory.REQUEST_AUDIT, clusterService, Origin.REST, Origin.TRANSPORT);
+        try {
+            AuditMessage msg = new AuditMessage(AuditCategory.REQUEST_AUDIT, clusterService, Origin.REST, Origin.TRANSPORT);
 
-        // Source IP
-        TransportAddress remoteAddress = request.remoteAddress();
-        if (remoteAddress == null) {
-            remoteAddress = threadPool.getThreadContext().getTransient(ConfigConstants.OPENDISTRO_SECURITY_REMOTE_ADDRESS);
-        }
-        msg.addRemoteAddress(remoteAddress);
+            // Source IP
+            TransportAddress remoteAddress = request.remoteAddress();
+            if (remoteAddress == null) {
+                remoteAddress = threadPool.getThreadContext().getTransient(ConfigConstants.OPENDISTRO_SECURITY_REMOTE_ADDRESS);
+            }
+            msg.addRemoteAddress(remoteAddress);
 
-        // Action name
-        msg.addPrivilege(action);
+            // Action name
+            msg.addPrivilege(action);
 
-        // Request type
-        msg.addRequestType(request.getClass().getSimpleName());
+            // Request type
+            msg.addRequestType(request.getClass().getSimpleName());
 
-        // Target indices
-        if (request instanceof IndicesRequest) {
-            String[] indices = ((IndicesRequest) request).indices();
-            msg.addIndices(indices);
+            // Target indices
+            if (request instanceof IndicesRequest) {
+                String[] indices = ((IndicesRequest) request).indices();
+                msg.addIndices(indices);
 
-            // Resolve wildcards to actual index names
-            if (resolveIndices && indices != null && indices.length > 0) {
-                try {
-                    String[] resolved = resolver.concreteIndexNames(clusterService.state(), IndicesOptions.lenientExpandOpen(), indices);
-                    msg.addResolvedIndices(resolved);
-                } catch (Exception e) {
-                    // Index resolution can fail if cluster state isn't ready — log raw indices only
+                // Resolve wildcards to actual index names
+                if (resolveIndices && indices != null && indices.length > 0) {
+                    try {
+                        String[] resolved = resolver.concreteIndexNames(clusterService.state(), IndicesOptions.lenientExpandOpen(), indices);
+                        msg.addResolvedIndices(resolved);
+                    } catch (Exception e) {
+                        // Index resolution can fail if cluster state isn't ready — log raw indices only
+                    }
                 }
             }
-        }
 
-        // Task ID
-        if (task != null) {
-            msg.addTaskId(task.getId());
-            if (task.getParentTaskId() != null && task.getParentTaskId().isSet()) {
-                msg.addTaskParentId(task.getParentTaskId().toString());
+            // Task ID
+            if (task != null) {
+                msg.addTaskId(task.getId());
+                if (task.getParentTaskId() != null && task.getParentTaskId().isSet()) {
+                    msg.addTaskParentId(task.getParentTaskId().toString());
+                }
             }
-        }
 
-        // Client cert identity
-        if (principal != null) {
-            msg.addEffectiveUser(principal);
-        }
-
-        // Authenticated user identity (when FGAC is active)
-        if (user != null) {
-            msg.addEffectiveUser(user.getName());
-        }
-
-        // REST headers (stashed by REST wrapper, filtered here)
-        Map<String, List<String>> headers = threadPool.getThreadContext().getTransient(ConfigConstants.SECURITY_AUDIT_REST_HEADERS);
-        if (headers != null && !headers.isEmpty()) {
-            Map<String, List<String>> filteredHeaders = new HashMap<>(headers);
-            if (excludeSensitiveHeaders) {
-                filteredHeaders.keySet().removeIf(AUTHORIZATION_HEADER);
+            // Client cert identity
+            if (principal != null) {
+                msg.addEffectiveUser(principal);
             }
-            msg.addRestHeaders(filteredHeaders, false, null);
-        }
 
-        // Request body (extracted from transport request object)
-        if (logRequestBody) {
-            addRequestBody(msg, request);
-        }
+            // Authenticated user identity (when FGAC is active)
+            if (user != null) {
+                msg.addEffectiveUser(user.getName());
+            }
 
-        auditLog.logRequestAudit(msg);
+            // REST headers (stashed by REST wrapper, filtered here)
+            Map<String, List<String>> headers = threadPool.getThreadContext().getTransient(ConfigConstants.SECURITY_AUDIT_REST_HEADERS);
+            if (headers != null && !headers.isEmpty()) {
+                Map<String, List<String>> filteredHeaders = new HashMap<>(headers);
+                if (excludeSensitiveHeaders) {
+                    filteredHeaders.keySet().removeIf(AUTHORIZATION_HEADER);
+                }
+                msg.addRestHeaders(filteredHeaders, false, null);
+            }
+
+            // Request body (extracted from transport request object)
+            if (logRequestBody) {
+                addRequestBody(msg, request);
+            }
+
+            auditLog.logRequestAudit(msg);
+        } catch (Exception e) {
+            log.error("Failed to log audit event for action '{}': {}", action, e.getMessage(), e);
+        }
         chain.proceed(task, action, request, listener);
     }
 
