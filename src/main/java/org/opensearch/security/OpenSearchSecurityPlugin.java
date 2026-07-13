@@ -460,6 +460,10 @@ public final class OpenSearchSecurityPlugin extends OpenSearchSecuritySSLPlugin
                 log.info("Compliance write_watched_indices dynamically updated");
                 auditLogImpl.getComplianceConfig().setWatchedWriteIndices(newValue);
             });
+            clusterService.getClusterSettings().addSettingsUpdateConsumer(SecuritySettings.COMPLIANCE_READ_WATCHED_FIELDS, newValue -> {
+                log.info("Compliance read_watched_fields dynamically updated");
+                auditLogImpl.getComplianceConfig().setWatchedReadFields(newValue);
+            });
         } else {
             auditLog = new NullAuditLog();
         }

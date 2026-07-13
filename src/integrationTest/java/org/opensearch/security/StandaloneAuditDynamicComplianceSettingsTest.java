@@ -158,4 +158,53 @@ public class StandaloneAuditDynamicComplianceSettingsTest {
                 "{\"persistent\": {\"plugins.security.audit.compliance.write_watched_indices\": [\"compliance-*\"]}}");
         }
     }
+
+    // =====================================================================
+    // read_watched_fields — change at runtime
+    // =====================================================================
+
+    @Test
+    public void shouldTrackReadForDynamicallyAddedWatchedFields() {
+        try (TestRestClient client = cluster.getRestClient()) {
+            // Set read watched fields dynamically
+            client.putJson("_cluster/settings",
+                "{\"persistent\": {\"plugins.security.audit.compliance.read_watched_fields\": [\"dynamic-read-watch\"]}}");
+
+            // Create and search the watched index
+            client.putJson("dynamic-read-watch/_doc/1?refresh=true", "{\"name\": \"dynamic-secret\", \"value\": 42}");
+            client.get("dynamic-read-watch/_search");
+        }
+
+        auditLogsRule.assertAtLeast(1, (AuditMessage msg) ->
+            msg.getCategory() == AuditCategory.COMPLIANCE_DOC_READ
+        );
+
+        // Reset
+        try (TestRestClient client = cluster.getRestClient()) {
+            client.putJson("_cluster/settings",
+                "{\"persistent\": {\"plugins.security.audit.compliance.read_watched_fields\": []}}");
+        }
+    }
+
+    @Test
+    public void shouldStopTrackingReadWhenWatchedFieldsCleared() {
+        try (TestRestClient client = cluster.getRestClient()) {
+            // First set a watch, then clear it
+            client.putJson("_cluster/settings",
+                "{\"persistent\": {\"plugins.security.audit.compliance.read_watched_fields\": [\"clear-read-test\"]}}");
+            client.putJson("clear-read-test/_doc/1?refresh=true", "{\"name\": \"tracked\"}");
+
+            // Clear the watch
+            client.putJson("_cluster/settings",
+                "{\"persistent\": {\"plugins.security.audit.compliance.read_watched_fields\": []}}");
+
+            // Search should NOT produce compliance read event now
+            client.get("clear-read-test/_search");
+        }
+
+        auditLogsRule.waitForAuditLogs();
+        auditLogsRule.assertExactlyScanAll(0, (AuditMessage msg) ->
+            msg.getCategory() == AuditCategory.COMPLIANCE_DOC_READ
+        );
+    }
 }

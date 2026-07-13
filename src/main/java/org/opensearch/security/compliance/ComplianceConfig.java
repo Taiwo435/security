@@ -34,6 +34,7 @@ import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.ExecutionException;
 import java.util.function.Supplier;
+import java.util.stream.Collectors;
 
 import com.google.common.annotations.VisibleForTesting;
 import com.google.common.cache.CacheBuilder;
@@ -88,7 +89,7 @@ public class ComplianceConfig {
     @JsonProperty("write_log_diffs")
     private volatile boolean logDiffsForWrite;
     @JsonProperty("read_watched_fields")
-    private final Map<String, List<String>> watchedReadFields;
+    private volatile Map<String, List<String>> watchedReadFields;
     @JsonProperty("read_ignore_users")
     private final Set<String> ignoredComplianceUsersForRead;
     @JsonProperty("write_watched_indices")
@@ -101,8 +102,8 @@ public class ComplianceConfig {
     private final WildcardMatcher ignoredComplianceUsersForWriteMatcher;
     private final String securityIndex;
 
-    private final Map<WildcardMatcher, Set<String>> readEnabledFields;
-    private final LoadingCache<String, WildcardMatcher> readEnabledFieldsCache;
+    private volatile Map<WildcardMatcher, Set<String>> readEnabledFields;
+    private volatile LoadingCache<String, WildcardMatcher> readEnabledFieldsCache;
     private final DateTimeFormatter auditLogPattern;
     private final String auditLogIndex;
     private volatile boolean enabled;
@@ -405,6 +406,29 @@ public class ComplianceConfig {
     public void setWatchedWriteIndices(List<String> indices) {
         this.watchedWriteIndicesPatterns = indices;
         this.watchedWriteIndicesMatcher = WildcardMatcher.from(indices);
+    }
+
+    public void setWatchedReadFields(List<String> readFields) {
+        // Parse format: "indexpattern,field1,field2,..." 
+        final Map<String, List<String>> parsed = readFields.stream()
+            .map(entry -> entry.split(","))
+            .filter(split -> split.length != 0 && !split[0].isEmpty())
+            .collect(
+                Collectors.toMap(
+                    split -> split[0],
+                    split -> split.length == 1
+                        ? List.of("*")
+                        : Arrays.stream(split).skip(1).collect(Collectors.toList())
+                )
+            );
+        this.watchedReadFields = parsed;
+        this.readEnabledFields = parsed.entrySet()
+            .stream()
+            .filter(entry -> !entry.getKey().isEmpty())
+            .collect(
+                Collectors.toMap(entry -> WildcardMatcher.from(entry.getKey()), entry -> Set.copyOf(entry.getValue()))
+            );
+        this.readEnabledFieldsCache.invalidateAll();
     }
 
     /**
